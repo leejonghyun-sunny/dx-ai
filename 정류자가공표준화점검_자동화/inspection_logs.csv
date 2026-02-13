@@ -1,0 +1,3 @@
+﻿Timestamp,Worker,Shift,Result,Freq_Hz,RPM,Tension_Kg,Cut_Sec,Depth_mm,Bite_Pos,Roundness_um,Step_um
+2026-02-12 18:28:45,이종현,주간 (Day),FAIL,3.1,1200,1.8,8.0,0.05,상 (Upper),3.9,3.8
+2026-02-13 09:43:06,신형기,주간 (Day),FAIL,36.0,2000,3.0,18.0,0.06,중 (Middle),3.9,4.0
