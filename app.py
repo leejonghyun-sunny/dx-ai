@@ -4,15 +4,14 @@ import os
 import datetime
 
 # ==========================================
-# [표준 데이터 베이스: 타협 불가 기준값]
-# 출처: DC V5 정류자 가공 공정 표준 지침서
+# [표준 데이터 베이스: 타협 불가 기준값 (Range)]
+# 출처: DC V5 정류자 가공 공정 표준 지침서 (2026.02.19 개정)
 # ==========================================
-STD_FREQ = 30.0          # Hz
-STD_RPM = 1860           # RPM
-STD_CUT_SEC = 16.0       # Sec
-STD_CUT_DIAL = 2.5       # Dial Step
-STD_DEPTH_2ND = 0.03     # mm
-STD_TENSION = 2.72       # Kg (Ø41.5 기준)
+MIN_FREQ, MAX_FREQ = 28.0, 32.0          # Hz
+MIN_RPM, MAX_RPM = 1750, 1900            # RPM
+MIN_CUT_SEC, MAX_CUT_SEC = 15.0, 17.0    # Sec
+MIN_DEPTH_2ND, MAX_DEPTH_2ND = 0.02, 0.04 # mm
+MIN_TENSION, MAX_TENSION = 2.5, 2.8      # Kg
 LIMIT_ROUNDNESS = 3.0    # µm (진원도 한계)
 LIMIT_STEP = 2.0         # µm (단차 한계)
 
@@ -86,10 +85,11 @@ with st.sidebar:
     st.header("📋 일일 점검 체크리스트")
     st.markdown("매일 아침 작업 전 확인")
     
-    st.checkbox("벨트 속도: 1860 RPM (30Hz)")
-    st.checkbox("절삭 속도: 16 Sec (2.5단)")
-    st.checkbox("가공 깊이: 0.03 mm (2차)")
-    st.checkbox("밸트 텐션: 2.72 Kg")
+    st.checkbox(f"주파수: {MIN_FREQ}~{MAX_FREQ} Hz")
+    st.checkbox(f"RPM: {MIN_RPM}~{MAX_RPM} RPM")
+    st.checkbox(f"절삭 속도: {MIN_CUT_SEC}~{MAX_CUT_SEC} Sec")
+    st.checkbox(f"가공 깊이: {MIN_DEPTH_2ND}~{MAX_DEPTH_2ND} mm")
+    st.checkbox(f"밸트 텐션: {MIN_TENSION}~{MAX_TENSION} Kg")
     st.checkbox("바이트 위치: 중하 (Middle-Lower)")
     
     st.markdown("---")
@@ -163,20 +163,37 @@ with tab1:
             st.warning("⚠️ 사이드바에서 '점검자 성명'을 먼저 입력해주세요.")
         else:
             errors = []
-            # ... (기존 점검 로직) ...
-            if input_freq != STD_FREQ: errors.append(f"❌ [주파수 불량] {STD_FREQ}Hz / {input_freq}Hz")
-            if input_rpm != STD_RPM: errors.append(f"❌ [RPM 불량] {STD_RPM}RPM / {input_rpm}RPM")
-            if input_depth != STD_DEPTH_2ND: errors.append(f"❌ [가공 깊이] {STD_DEPTH_2ND}mm / {input_depth}mm")
-            if input_tension != STD_TENSION: errors.append(f"❌ [텐션] {STD_TENSION}Kg / {input_tension}Kg")
-            if input_cut_sec != STD_CUT_SEC: errors.append(f"❌ [절삭 속도] {STD_CUT_SEC}초 / {input_cut_sec}초")
-            if bite_check != "중하 (Middle-Lower)": errors.append(f"⚠️ [바이트 위치] 권장: 중하 / 현재: {bite_check}")
+            
+            # 1. 주파수 점검
+            if not (MIN_FREQ <= input_freq <= MAX_FREQ):
+                errors.append(f"❌ [주파수 이탈] 기준: {MIN_FREQ}~{MAX_FREQ}Hz / 현재: {input_freq}Hz")
+            
+            # 2. RPM 점검
+            if not (MIN_RPM <= input_rpm <= MAX_RPM):
+                errors.append(f"❌ [RPM 이탈] 기준: {MIN_RPM}~{MAX_RPM}RPM / 현재: {input_rpm}RPM")
+                
+            # 3. 2차 가공 깊이 점검
+            if not (MIN_DEPTH_2ND <= input_depth <= MAX_DEPTH_2ND):
+                errors.append(f"❌ [가공 깊이 이탈] 기준: {MIN_DEPTH_2ND}~{MAX_DEPTH_2ND}mm / 현재: {input_depth}mm")
+                
+            # 4. 텐션 점검
+            if not (MIN_TENSION <= input_tension <= MAX_TENSION):
+                errors.append(f"❌ [텐션 이탈] 기준: {MIN_TENSION}~{MAX_TENSION}Kg / 현재: {input_tension}Kg")
+
+            # 5. 절삭 속도 점검
+            if not (MIN_CUT_SEC <= input_cut_sec <= MAX_CUT_SEC):
+                errors.append(f"❌ [절삭 속도 이탈] 기준: {MIN_CUT_SEC}~{MAX_CUT_SEC}초 / 현재: {input_cut_sec}초")
+
+            # 6. 바이트 위치 점검
+            if bite_check != "중하 (Middle-Lower)":
+                errors.append(f"⚠️ [바이트 위치 경고] 권장: 중하(Middle-Lower) / 현재: {bite_check}")
 
             # 품질 데이터 판정
             q_result = "PASS"
             if meas_roundness > LIMIT_ROUNDNESS or meas_step > LIMIT_STEP:
                 q_result = "FAIL (Quality)"
                 errors.append(f"❌ [품질 불량] 진원도/단차 기준 초과")
-            elif errors:
+            elif errors: # If there are setting errors but no quality errors
                 q_result = "FAIL (Setting)"
 
             if not errors:
