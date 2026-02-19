@@ -99,8 +99,26 @@ with st.sidebar:
 # ==========================================
 # [탭 구성: 점검 수행 vs 이력 조회]
 # ==========================================
-tab1, tab2 = st.tabs(["🛡️ 설정값 점검 (Audit)", "📊 점검 이력 조회 (History)"])
+# ==========================================
+# [관리자 모드 (Admin Mode)]
+# ==========================================
+with st.sidebar:
+    st.markdown("---")
+    with st.expander("🔒 관리자 모드 (Admin)"):
+        admin_password = st.text_input("비밀번호", type="password")
+        if admin_password == "1234":  # 간단한 비밀번호 (실제 운영 시 보안 강화 필요)
+            st.session_state['is_admin'] = True
+            st.success("관리자 인증 성공")
+        else:
+            st.session_state['is_admin'] = False
 
+# 탭 구성 (관리자인 경우 탭 확장)
+if st.session_state.get('is_admin', False):
+    tab1, tab2, tab3 = st.tabs(["🛡️ 설정값 점검 (Audit)", "📊 점검 이력 조회 (User)", "📈 관리자 대시보드 (Manager)"])
+else:
+    tab1, tab2 = st.tabs(["🛡️ 설정값 점검 (Audit)", "📊 점검 이력 조회 (History)"])
+
+# ... (Tab 1: 설정값 점검 - 기존 코드와 동일) ...
 with tab1:
     # ==========================================
     # [섹션 1: 가공 조건 세팅 점검]
@@ -309,3 +327,63 @@ with tab2:
             st.info(f"{search_date}에 대한 점검 기록이 없습니다.")
     else:
         st.warning("아직 저장된 점검 이력이 없습니다.")
+
+# ==========================================
+# [관리자 전용 대시보드 (Tab 3)]
+# ==========================================
+if is_admin:
+    # tab3 변수가 정의되어 있어야 함 (위에서 정의됨)
+    with tab3:
+        st.header("📈 관리자 대시보드 (Manager Dashboard)")
+        st.info("관리자 전용: 품질 KPI 및 트렌드 분석 모니터링")
+        
+        if os.path.exists(LOG_FILE):
+            df_admin = pd.read_csv(LOG_FILE)
+            if not df_admin.empty:
+                # ------------------------------------------
+                # 1. KPI 지표 (Metrics)
+                # ------------------------------------------
+                st.subheader("1. 핵심 성과 지표 (KPI Monitor)")
+                
+                total_cnt = len(df_admin)
+                pass_df = df_admin[df_admin['Result'] == 'PASS']
+                pass_cnt = len(pass_df)
+                fail_cnt = total_cnt - pass_cnt
+                
+                # 합격률 계산
+                pass_rate = (pass_cnt / total_cnt) * 100 if total_cnt > 0 else 0
+                
+                # KPI 카드 배치
+                kpi1, kpi2, kpi3 = st.columns(3)
+                kpi1.metric("총 점검 수 (Total)", f"{total_cnt} 건")
+                kpi2.metric("합격 수 (PASS)", f"{pass_cnt} 건", delta=f"{pass_rate:.1f}%")
+                kpi3.metric("불량 수 (FAIL)", f"{fail_cnt} 건", delta_color="inverse")
+                
+                st.markdown("---")
+                
+                # ------------------------------------------
+                # 2. 품질 데이터 트렌드 (Line Chart)
+                # ------------------------------------------
+                st.subheader("2. 품질 데이터 트렌드 (Quality Trends)")
+                
+                # Timestamp를 datetime으로 변환
+                df_admin['Timestamp'] = pd.to_datetime(df_admin['Timestamp'])
+                
+                # 필요한 컬럼만 추출하여 인덱스 설정
+                df_trend = df_admin[['Timestamp', 'Roundness', 'Step']].copy()
+                df_trend.set_index('Timestamp', inplace=True)
+                
+                # 차트 그리기
+                st.caption("🟦 진원도(Roundness) & 🟧 단차(Step) 변화 추이")
+                st.line_chart(df_trend)
+                
+                # ------------------------------------------
+                # 3. 상세 로그 (관리자용 - 전체 데이터)
+                # ------------------------------------------
+                st.markdown("---")
+                st.subheader("3. 전체 상세 로그 (Full Log)")
+                st.dataframe(df_admin.sort_values(by="Timestamp", ascending=False), use_container_width=True)
+            else:
+                st.warning("데이터가 아직 없습니다.")
+        else:
+            st.warning("로그 파일이 없습니다. 점검을 먼저 수행해주세요.")
