@@ -174,16 +174,24 @@ with tab1:
             # 하 (Lower) - Y=0.25 (하단 부근)
             ax.annotate('하 (Lower)', xy=(0.5, 0.25), xytext=(0.65, 0.25), arrowprops=arrow_props, fontsize=8, va='center')
             
-            # 4. 타겟 포인트 (중하) - 파란색 점 + 강조
-            # 중(0.5)과 하(0.25) 사이 -> 약 0.375
-            target_y = 0.375
+            # 4. 타겟 포인트 (중 ~ 중하) - 파란색 점 + 강조
+            # 중(0.5)과 하(0.25) 사이 -> 0.375 (Middle-Lower)
+            # 중(0.5) (Middle)
             
-            # 파란 점 (Blue Dot)
-            target_dot = patches.Circle((0.5, target_y), 0.03, color='blue', zorder=10)
-            ax.add_patch(target_dot)
+            # 파란 점 (Blue Dot) - Two points
+            middle_y = 0.5
+            mid_low_y = 0.375
+            
+            # Target Zone Rectangle (Middle ~ Middle-Lower)
+            # Y: 0.3 to 0.6 (Covers Middle-Lower(0.3-0.5) and lower half of Middle(0.5-0.7)?) 
+            # Actually Middle is 0.5-0.7, Middle-Lower is 0.3-0.5.
+            # Let's highlight the interface or just points.
+            
+            # Standard: Middle(0.5) & Middle-Lower(0.375)
+            ax.scatter([0.5, 0.5], [middle_y, mid_low_y], color='blue', s=80, zorder=10, label='Target')
             
             # 타겟 라벨
-            ax.annotate('권장 (Target)', xy=(0.5, target_y), xytext=(0.15, target_y), 
+            ax.annotate('권장 (Target)\n중 ~ 중하', xy=(0.5, 0.45), xytext=(0.15, 0.45), 
                         arrowprops=dict(facecolor='blue', edgecolor='blue', arrowstyle='->'),
                         fontsize=9, fontweight='bold', color='blue', ha='center', va='center')
 
@@ -191,7 +199,7 @@ with tab1:
             ax.set_xlim(0, 1)
             ax.set_ylim(0, 1)
             ax.axis('off') # 축 숨기기
-            ax.set_title("가공 바이트 위치 표준", fontsize=10)
+            ax.set_title("가공 바이트 위치 표준 (중 ~ 중하)", fontsize=10)
             
             return fig
 
@@ -199,20 +207,10 @@ with tab1:
         
         with col_bite_input:
             bite_check = st.radio("현재 바이트 사용 구간은?", ["상 (Upper)", "중 (Middle)", "중하 (Middle-Lower)", "하 (Lower)"], index=1)
-            st.caption("※ 우측 그림의 '파란색 점(중하)' 위치를 준수하세요.")
+            st.caption("※ '중' 또는 '중하' 구간을 권장합니다.")
             
         with col_bite_img:
             st.pyplot(draw_byte_guide(), use_container_width=True)        
-        # 품질 측정값 입력 (함께 저장하기 위해 폼 안으로 이동 고려, 현재는 별도 입력이므로 form 외부 변수 사용 불가. 
-        # 사용성을 위해 트러블슈팅 값을 여기서 입력받지 않음. 
-        # 대신, '감사 실행' 시 품질값은 0.0으로 초기화 저장하거나, 별도 품질 저장 버튼을 두는 것이 좋으나
-        # 요청사항 1번(품질측정 데이터 이력관리)을 위해 폼 내부에 품질 입력칸을 추가하는 것이 가장 확실함.
-        # 하지만 UX상 분리된 게 나을 수 있어, 여기서는 '설정값 점검' 저장 시 품질값은 0(미측정)으로 저장하고,
-        # 아래 품질 측정 섹션에서 별도 저장 버튼을 두거나, 통합 저장 버튼을 만드는 것이 좋음.
-        # --> **통합 저장 방식**으로 변경: 품질 측정 섹션을 위로 올리거나, Session State를 써야 함.
-        # --> 가장 쉬운 방법: 품질 입력란도 form 에 포함시키지 않고, 맨 아래 '전체 데이터 저장' 버튼을 두거나
-        #     기존대로 하되, 품질값 입력을 폼 밖에서 받고, submit 버튼 눌렀을 때 해당 변수(meas_roundness)를 참조 가능한지 확인.
-        #     Streamlit form submit 시 form 외부 widget 값은 최신값 참조 가능함.
         
         submitted = st.form_submit_button("🛡️ 설정값 감사 및 저장")
 
@@ -236,7 +234,7 @@ with tab1:
             with st.expander("🛠️ 긴급 조치 가이드", expanded=True):
                 st.markdown("""
                 **분석된 표준화 솔루션:**
-                1. **바이트 위치**: '중하 (Middle-Lower)' 확인
+                1. **바이트 위치**: '중' 또는 '중하' 확인
                 2. **텐션**: 2.72 Kg 재설정
                 3. **속도**: 2.5 단계 (16초) 확인
                 """)
@@ -267,9 +265,9 @@ with tab1:
             if not (MIN_CUT_SEC <= input_cut_sec <= MAX_CUT_SEC):
                 errors.append(f"❌ [절삭 속도 이탈] 기준: {MIN_CUT_SEC}~{MAX_CUT_SEC}초 / 현재: {input_cut_sec}초")
 
-            # 6. 바이트 위치 점검
-            if bite_check != "중하 (Middle-Lower)":
-                errors.append(f"⚠️ [바이트 위치 경고] 권장: 중하(Middle-Lower) / 현재: {bite_check}")
+            # 6. 바이트 위치 점검 (수정됨: 중, 중하 허용)
+            if bite_check not in ["중 (Middle)", "중하 (Middle-Lower)"]:
+                errors.append(f"⚠️ [바이트 위치 경고] 권장: 중(Middle) 또는 중하(Middle-Lower) / 현재: {bite_check}")
 
             # 품질 데이터 판정
             q_result = "PASS"
