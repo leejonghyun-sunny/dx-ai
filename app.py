@@ -125,45 +125,61 @@ with tab1:
         def draw_byte_guide():
             fig, ax = plt.subplots(figsize=(4, 3))
             
-            # 메인 원 (정류자)
-            circle = patches.Circle((0.5, 0.5), 0.4, edgecolor='black', facecolor='#f0f0f0', linewidth=2)
-            ax.add_patch(circle)
+            # 1. 바이트 (Byte) - 검은색 형상 (좌측)
+            # (x, y, width, height)
+            byte_rect = patches.Rectangle((0.1, 0.2), 0.4, 0.6, color='#333333', label='Byte')
+            ax.add_patch(byte_rect)
             
-            # 구역 표시 라인 (상, 중, 중하, 하) - 단순화하여 높이로 구분
-            # Y축 0.1~0.9 사용 (0.8 간격 -> 0.2씩)
-            # Upper: 0.9 ~ 0.7
-            # Middle: 0.7 ~ 0.5
-            # Middle-Lower: 0.5 ~ 0.3 (Target)
-            # Lower: 0.3 ~ 0.1
+            # 2. 정류자 (Commutator) - 회색 곡면 (우측)
+            # 바이트와 접촉하는 부분 표현
+            comm_arc = patches.Arc((0.8, 0.5), 0.6, 1.0, theta1=90, theta2=270, color='#95a5a6', linewidth=3)
+            ax.add_patch(comm_arc)
+            # 채워진 느낌을 위해 Polygon 사용 가능하지만 Arc로 단순화
             
-            # Target Zone (Middle-Lower) Highlight
-            target_rect = patches.Rectangle((0.1, 0.3), 0.8, 0.2, color='#2ecc71', alpha=0.5, label='Target: Middle-Lower')
-            ax.add_patch(target_rect)
+            # 3. 위치 표시 (상/중/하) - 바이트 우측면 기준
+            # Byte Right Edge X = 0.5
+            # Top Y = 0.8 / Bottom Y = 0.2
+            # Height = 0.6
             
-            # 라인 그리기
-            ax.axhline(0.7, color='gray', linestyle='--', linewidth=0.5)
-            ax.axhline(0.5, color='gray', linestyle='--', linewidth=0.5)
-            ax.axhline(0.3, color='gray', linestyle='--', linewidth=0.5)
+            # 화살표 및 텍스트 스타일
+            arrow_props = dict(facecolor='red', edgecolor='red', arrowstyle='->', linewidth=1.5)
+            text_offset_x = 0.55
             
-            # 텍스트 라벨
-            ax.text(0.5, 0.8, 'Upper', ha='center', va='center', fontsize=8)
-            ax.text(0.5, 0.6, 'Middle', ha='center', va='center', fontsize=8)
-            ax.text(0.5, 0.4, 'Middle-Lower\n(Target)', ha='center', va='center', fontsize=9, fontweight='bold', color='darkgreen')
-            ax.text(0.5, 0.2, 'Lower', ha='center', va='center', fontsize=8)
+            # 상 (Upper) - Y=0.75 (상단 부근)
+            ax.annotate('상 (Upper)', xy=(0.5, 0.75), xytext=(0.65, 0.75), arrowprops=arrow_props, fontsize=8, va='center')
             
-            # 바이트(공구) 형상 팁
-            # ax.arrow(0.95, 0.4, -0.1, 0, head_width=0.05, head_length=0.05, fc='red', ec='red')
+            # 중 (Middle) - Y=0.5 (중앙)
+            ax.annotate('중 (Middle)', xy=(0.5, 0.5), xytext=(0.65, 0.5), arrowprops=arrow_props, fontsize=8, va='center')
             
+            # 하 (Lower) - Y=0.25 (하단 부근)
+            ax.annotate('하 (Lower)', xy=(0.5, 0.25), xytext=(0.65, 0.25), arrowprops=arrow_props, fontsize=8, va='center')
+            
+            # 4. 타겟 포인트 (중하) - 파란색 점 + 강조
+            # 중(0.5)과 하(0.25) 사이 -> 약 0.375
+            target_y = 0.375
+            
+            # 파란 점 (Blue Dot)
+            target_dot = patches.Circle((0.5, target_y), 0.03, color='blue', zorder=10)
+            ax.add_patch(target_dot)
+            
+            # 타겟 라벨
+            ax.annotate('권장 (Target)', xy=(0.5, target_y), xytext=(0.15, target_y), 
+                        arrowprops=dict(facecolor='blue', edgecolor='blue', arrowstyle='->'),
+                        fontsize=9, fontweight='bold', color='blue', ha='center', va='center')
+
+            # 5. 시각적 조정
             ax.set_xlim(0, 1)
             ax.set_ylim(0, 1)
             ax.axis('off') # 축 숨기기
+            ax.set_title("가공 바이트 위치 표준", fontsize=10)
+            
             return fig
 
         col_bite_input, col_bite_img = st.columns([1.5, 1])
         
         with col_bite_input:
             bite_check = st.radio("현재 바이트 사용 구간은?", ["상 (Upper)", "중 (Middle)", "중하 (Middle-Lower)", "하 (Lower)"], index=1)
-            st.caption("※ 우측 그림의 '초록색 구간'을 권장합니다.")
+            st.caption("※ 우측 그림의 '파란색 점(중하)' 위치를 준수하세요.")
             
         with col_bite_img:
             st.pyplot(draw_byte_guide(), use_container_width=True)        
