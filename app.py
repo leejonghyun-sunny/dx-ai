@@ -44,10 +44,56 @@ def save_log(date, user, freq, rpm, tension, cut_sec, depth, bite, roundness, st
     })
     new_data.to_csv(LOG_FILE, mode='a', header=False, index=False)
 
-# ... (UI 설정 및 스타일 유지) ...
+# ==========================================
+# [UI 및 스타일 설정]
+# ==========================================
+st.set_page_config(page_title="DC V5 AI 감사관", page_icon="🛡️", layout="centered")
 
-# ... (사이드바 유지) ...
+st.markdown("""
+    <style>
+    .big-font { font-size:20px !important; font-weight: bold; }
+    .success { color: green; font-weight: bold; }
+    .fail { color: red; font-weight: bold; }
+    
+    /* [User Request] 숫자 입력창의 +/- 버튼 숨기기 (직관적 숫자패드 사용 유도) */
+    button[data-testid="stNumberInputStepDown"],
+    button[data-testid="stNumberInputStepUp"] {
+        display: none !important;
+    }
+    
+    /* 웹킷 브라우저 기본 스핀 버튼 제거 */
+    input[type=number]::-webkit-inner-spin-button, 
+    input[type=number]::-webkit-outer-spin-button { 
+        -webkit-appearance: none; 
+        margin: 0; 
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
+st.title("🛡️ DC V5 공정 AI 감사관")
+st.caption("안티그래비티 생산 현장 지원 시스템")
+st.markdown("---")
+
+# ==========================================
+# [사이드바: 사용자 정보 및 일일 점검표]
+# ==========================================
+with st.sidebar:
+    st.header("👤 점검자 정보")
+    input_user = st.text_input("점검자 성명", placeholder="이름을 입력하세요")
+    input_date = st.date_input("점검 일자", datetime.date.today())
+    
+    st.markdown("---")
+    st.header("📋 일일 점검 체크리스트")
+    st.markdown("매일 아침 작업 전 확인")
+    
+    st.checkbox("벨트 속도: 1860 RPM (30Hz)")
+    st.checkbox("절삭 속도: 16 Sec (2.5단)")
+    st.checkbox("가공 깊이: 0.03 mm (2차)")
+    st.checkbox("밸트 텐션: 2.72 Kg")
+    st.checkbox("바이트 위치: 중하 (Middle-Lower)")
+    
+    st.markdown("---")
+    st.caption("Based on Hyoseong Geared Motor Standards")
 # ==========================================
 # [탭 구성: 점검 수행 vs 이력 조회]
 # ==========================================
