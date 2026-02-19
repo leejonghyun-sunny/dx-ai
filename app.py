@@ -23,6 +23,19 @@ st.markdown("""
     .big-font { font-size:20px !important; font-weight: bold; }
     .success { color: green; font-weight: bold; }
     .fail { color: red; font-weight: bold; }
+    
+    /* [User Request] 숫자 입력창의 +/- 버튼 숨기기 (직관적 숫자패드 사용 유도) */
+    button[data-testid="stNumberInputStepDown"],
+    button[data-testid="stNumberInputStepUp"] {
+        display: none !important;
+    }
+    
+    /* 웹킷 브라우저 기본 스핀 버튼 제거 */
+    input[type=number]::-webkit-inner-spin-button, 
+    input[type=number]::-webkit-outer-spin-button { 
+        -webkit-appearance: none; 
+        margin: 0; 
+    }
     </style>
     """, unsafe_allow_html=True)
 
