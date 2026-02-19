@@ -1,14 +1,26 @@
+import streamlit as st
 import pandas as pd
 import os
 import datetime
 
-# ... (기존 상수 정의 유지) ...
+# ==========================================
+# [표준 데이터 베이스: 타협 불가 기준값]
+# 출처: DC V5 정류자 가공 공정 표준 지침서
+# ==========================================
+STD_FREQ = 30.0          # Hz
+STD_RPM = 1860           # RPM
+STD_CUT_SEC = 16.0       # Sec
+STD_CUT_DIAL = 2.5       # Dial Step
+STD_DEPTH_2ND = 0.03     # mm
+STD_TENSION = 2.72       # Kg (Ø41.5 기준)
+LIMIT_ROUNDNESS = 3.0    # µm (진원도 한계)
+LIMIT_STEP = 2.0         # µm (단차 한계)
+
+LOG_FILE = "inspection_logs.csv"
 
 # ==========================================
 # [데이터 저장 함수]
 # ==========================================
-LOG_FILE = "inspection_logs.csv"
-
 def save_log(date, user, freq, rpm, tension, cut_sec, depth, bite, result):
     if not os.path.exists(LOG_FILE):
         df = pd.DataFrame(columns=["Date", "User", "Freq", "RPM", "Tension", "Cut_Sec", "Depth", "Bite", "Result", "Timestamp"])
@@ -28,7 +40,35 @@ def save_log(date, user, freq, rpm, tension, cut_sec, depth, bite, result):
     })
     new_data.to_csv(LOG_FILE, mode='a', header=False, index=False)
 
-# ... (UI 설정 및 스타일 유지) ...
+# ==========================================
+# [UI 및 스타일 설정]
+# ==========================================
+st.set_page_config(page_title="DC V5 AI 감사관", page_icon="🛡️", layout="centered")
+
+st.markdown("""
+    <style>
+    .big-font { font-size:20px !important; font-weight: bold; }
+    .success { color: green; font-weight: bold; }
+    .fail { color: red; font-weight: bold; }
+    
+    /* [User Request] 숫자 입력창의 +/- 버튼 숨기기 (직관적 숫자패드 사용 유도) */
+    button[data-testid="stNumberInputStepDown"],
+    button[data-testid="stNumberInputStepUp"] {
+        display: none !important;
+    }
+    
+    /* 웹킷 브라우저 기본 스핀 버튼 제거 */
+    input[type=number]::-webkit-inner-spin-button, 
+    input[type=number]::-webkit-outer-spin-button { 
+        -webkit-appearance: none; 
+        margin: 0; 
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+st.title("🛡️ DC V5 공정 AI 감사관")
+st.caption("안티그래비티 생산 현장 지원 시스템")
+st.markdown("---")
 
 # ==========================================
 # [사이드바: 사용자 정보 및 일일 점검표]
@@ -63,7 +103,6 @@ with tab1:
     st.header("1. 설비 세팅값 검증 (Strict Monitoring)")
     st.info(f"💡 {input_date.strftime('%Y-%m-%d')} / 점검자: {input_user if input_user else '미지정'}")
 
-    # ... (기존 입력 폼 유지) ...
     with st.form("setting_check_form"):
         col1, col2 = st.columns(2)
         with col1:
@@ -85,8 +124,6 @@ with tab1:
             st.warning("⚠️ 사이드바에서 '점검자 성명'을 먼저 입력해주세요.")
         else:
             errors = []
-            
-            # ... (기존 점검 로직 유지) ...
             
             # 1. 주파수 점검
             if input_freq != STD_FREQ:
@@ -128,7 +165,6 @@ with tab1:
     # ==========================================
     # [섹션 2: 트러블 슈팅 (품질 이상 대응)]
     # ==========================================
-    # ... (기존 트러블슈팅 로직 유지) ...
     st.header("2. 품질 측정 및 트러블슈팅")
     st.warning("⚠️ 진원도나 단차 이상 발생 시 입력하십시오.")
 
