@@ -41,14 +41,25 @@ try:
         df = pd.read_csv(LOG_FILE)
         excel_file = f"test_export_{today}.xlsx"
         
-        # Simulate Streamlit download button logic (writing to buffer/file)
-        with pd.ExcelWriter(excel_file, engine='xlsxwriter') as writer:
-            df.to_excel(writer, index=False, sheet_name='Sheet1')
-            
-        if os.path.exists(excel_file):
-            print(f"SUCCESS: Excel file '{excel_file}' created.")
-        else:
-            print("FAILURE: Excel file not created.")
+        # Test 1: xlsxwriter
+        excel_file_xlsxwriter = f"test_export_xlsxwriter_{today}.xlsx"
+        try:
+            with pd.ExcelWriter(excel_file_xlsxwriter, engine='xlsxwriter') as writer:
+                df.to_excel(writer, index=False, sheet_name='Sheet1')
+            if os.path.exists(excel_file_xlsxwriter):
+                print(f"SUCCESS: xlsxwriter created {excel_file_xlsxwriter}")
+        except Exception as e:
+            print(f"FAILURE: xlsxwriter error: {e}")
+
+        # Test 2: openpyxl
+        excel_file_openpyxl = f"test_export_openpyxl_{today}.xlsx"
+        try:
+            with pd.ExcelWriter(excel_file_openpyxl, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='Sheet1')
+            if os.path.exists(excel_file_openpyxl):
+                print(f"SUCCESS: openpyxl created {excel_file_openpyxl}")
+        except Exception as e:
+            print(f"FAILURE: openpyxl error: {e}")
     else:
         print("FAILURE: Log file not created.")
         
