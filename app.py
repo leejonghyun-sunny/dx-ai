@@ -97,23 +97,25 @@ with st.sidebar:
     st.markdown("---")
     st.caption("Based on Hyoseong Geared Motor Standards")
 # ==========================================
-# [탭 구성: 점검 수행 vs 이력 조회]
-# ==========================================
-# ==========================================
-# [관리자 모드 (Admin Mode)]
+# [관리자 모드 (Admin Mode 로그인)]
 # ==========================================
 with st.sidebar:
     st.markdown("---")
     with st.expander("🔒 관리자 모드 (Admin)"):
         admin_password = st.text_input("비밀번호", type="password")
-        if admin_password == "1234":  # 간단한 비밀번호 (실제 운영 시 보안 강화 필요)
+        if admin_password == "1234":
             st.session_state['is_admin'] = True
             st.success("관리자 인증 성공")
         else:
             st.session_state['is_admin'] = False
 
-# 탭 구성 (관리자인 경우 탭 확장)
-if st.session_state.get('is_admin', False):
+# 관리자 권한 상태 변수 설정 (Global Scope)
+is_admin = st.session_state.get('is_admin', False)
+
+# ==========================================
+# [탭 구성: 점검 수행 vs 이력 조회]
+# ==========================================
+if is_admin:
     tab1, tab2, tab3 = st.tabs(["🛡️ 설정값 점검 (Audit)", "📊 점검 이력 조회 (User)", "📈 관리자 대시보드 (Manager)"])
 else:
     tab1, tab2 = st.tabs(["🛡️ 설정값 점검 (Audit)", "📊 점검 이력 조회 (History)"])
