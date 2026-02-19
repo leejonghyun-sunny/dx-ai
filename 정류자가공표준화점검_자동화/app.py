@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import datetime
 import os
 
-# 1. 데이터 저장 파일 설정
+# 1. 파일 설정
 LOG_FILE = 'inspection_logs.csv'
 
 st.set_page_config(page_title="정류자 가공 점검", page_icon="⚙️")
@@ -34,15 +34,3 @@ with st.form("inspection_form"):
         else:
             df.to_csv(LOG_FILE, mode='a', header=False, index=False, encoding='utf-8-sig')
         st.success("데이터가 저장되었습니다!")
-
-# --- 3. 데이터 관리 구역 (이사님용) ---
-st.divider()
-st.subheader("📊 데이터 관리자 메뉴")
-if os.path.isfile(LOG_FILE):
-    all_data = pd.read_csv(LOG_FILE)
-    st.write("🔍 최근 점검 이력")
-    st.table(all_data.tail(5))
-    csv = all_data.to_csv(index=False).encode('utf-8-sig')
-    st.download_button(label="📥 전체 데이터 엑셀(CSV) 내려받기", data=csv, file_name="report.csv", mime="text/csv")
-else:
-    st.warning("저장된 데이터가 없습니다.")
