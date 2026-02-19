@@ -211,7 +211,7 @@ with tab2:
             # Excel 변환을 위해 io.BytesIO 사용
             import io
             buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                 filtered_df.to_excel(writer, index=False, sheet_name='Sheet1')
                 
             with col_btn:
