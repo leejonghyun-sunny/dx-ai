@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import os
 import datetime
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 
 # ==========================================
 # [표준 데이터 베이스: 타협 불가 기준값 (Range)]
@@ -116,10 +118,55 @@ with tab1:
             input_cut_sec = st.number_input("절삭 속도 (Sec)", value=0.0, step=0.5)
             input_depth = st.number_input("2차 가공 깊이 (mm)", value=0.00, step=0.01, format="%.2f")
         
-        # 바이트 위치 확인 (체크박스)
+        # 바이트 위치 확인 (체크박스 & 가이드 그림)
         st.markdown("**바이트 위치 확인**")
-        bite_check = st.radio("현재 바이트 사용 구간은?", ["상 (Upper)", "중 (Middle)", "중하 (Middle-Lower)", "하 (Lower)"], index=1)
         
+        # 가이드 그림 생성을 위한 함수
+        def draw_byte_guide():
+            fig, ax = plt.subplots(figsize=(4, 3))
+            
+            # 메인 원 (정류자)
+            circle = patches.Circle((0.5, 0.5), 0.4, edgecolor='black', facecolor='#f0f0f0', linewidth=2)
+            ax.add_patch(circle)
+            
+            # 구역 표시 라인 (상, 중, 중하, 하) - 단순화하여 높이로 구분
+            # Y축 0.1~0.9 사용 (0.8 간격 -> 0.2씩)
+            # Upper: 0.9 ~ 0.7
+            # Middle: 0.7 ~ 0.5
+            # Middle-Lower: 0.5 ~ 0.3 (Target)
+            # Lower: 0.3 ~ 0.1
+            
+            # Target Zone (Middle-Lower) Highlight
+            target_rect = patches.Rectangle((0.1, 0.3), 0.8, 0.2, color='#2ecc71', alpha=0.5, label='Target: Middle-Lower')
+            ax.add_patch(target_rect)
+            
+            # 라인 그리기
+            ax.axhline(0.7, color='gray', linestyle='--', linewidth=0.5)
+            ax.axhline(0.5, color='gray', linestyle='--', linewidth=0.5)
+            ax.axhline(0.3, color='gray', linestyle='--', linewidth=0.5)
+            
+            # 텍스트 라벨
+            ax.text(0.5, 0.8, 'Upper', ha='center', va='center', fontsize=8)
+            ax.text(0.5, 0.6, 'Middle', ha='center', va='center', fontsize=8)
+            ax.text(0.5, 0.4, 'Middle-Lower\n(Target)', ha='center', va='center', fontsize=9, fontweight='bold', color='darkgreen')
+            ax.text(0.5, 0.2, 'Lower', ha='center', va='center', fontsize=8)
+            
+            # 바이트(공구) 형상 팁
+            # ax.arrow(0.95, 0.4, -0.1, 0, head_width=0.05, head_length=0.05, fc='red', ec='red')
+            
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1)
+            ax.axis('off') # 축 숨기기
+            return fig
+
+        col_bite_input, col_bite_img = st.columns([1.5, 1])
+        
+        with col_bite_input:
+            bite_check = st.radio("현재 바이트 사용 구간은?", ["상 (Upper)", "중 (Middle)", "중하 (Middle-Lower)", "하 (Lower)"], index=1)
+            st.caption("※ 우측 그림의 '초록색 구간'을 권장합니다.")
+            
+        with col_bite_img:
+            st.pyplot(draw_byte_guide(), use_container_width=True)        
         # 품질 측정값 입력 (함께 저장하기 위해 폼 안으로 이동 고려, 현재는 별도 입력이므로 form 외부 변수 사용 불가. 
         # 사용성을 위해 트러블슈팅 값을 여기서 입력받지 않음. 
         # 대신, '감사 실행' 시 품질값은 0.0으로 초기화 저장하거나, 별도 품질 저장 버튼을 두는 것이 좋으나
