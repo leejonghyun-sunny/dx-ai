@@ -212,32 +212,19 @@ with tab1:
         with col_bite_img:
             st.pyplot(draw_byte_guide(), use_container_width=True)        
         
-        submitted = st.form_submit_button("🛡️ 설정값 감사 및 저장")
 
-    # ==========================================
-    # [섹션 2: 품질 측정 (Form 외부)]
-    # ==========================================
-    st.markdown("---")
-    st.header("2. 품질 측정 데이터 (선택)")
-    col3, col4 = st.columns(2)
-    with col3:
-        meas_roundness = st.number_input("측정 진원도 (µm)", value=0.0, step=0.1)
-    with col4:
-        meas_step = st.number_input("측정 단차 (µm)", value=0.0, step=0.1)
+        # ==========================================
+        # [섹션 2: 품질 측정 (Form 내부로 이동)]
+        # ==========================================
+        st.markdown("---")
+        st.subheader("2. 품질 측정 데이터 (선택)")
+        col3, col4 = st.columns(2)
+        with col3:
+            meas_roundness = st.number_input("측정 진원도 (µm)", value=0.0, step=0.1)
+        with col4:
+            meas_step = st.number_input("측정 단차 (µm)", value=0.0, step=0.1)
 
-    # 트러블슈팅 가이드 표시 로직 (실시간 반응을 위해 form 밖 유지)
-    if meas_roundness > 0 or meas_step > 0:
-        is_roundness_fail = meas_roundness > LIMIT_ROUNDNESS
-        is_step_fail = meas_step > LIMIT_STEP
-        if is_roundness_fail or is_step_fail:
-            st.error(f"🚨 비상: 품질 기준 초과 발생! (진원도 한계: {LIMIT_ROUNDNESS}µm, 단차 한계: {LIMIT_STEP}µm)")
-            with st.expander("🛠️ 긴급 조치 가이드", expanded=True):
-                st.markdown("""
-                **분석된 표준화 솔루션:**
-                1. **바이트 위치**: '중' 또는 '중하' 확인
-                2. **텐션**: 2.72 Kg 재설정
-                3. **속도**: 2.5 단계 (16초) 확인
-                """)
+        submitted = st.form_submit_button("�️ 설정값 및 품질 데이터 저장 (Save All)")
 
     if submitted:
         if not input_user:
@@ -274,6 +261,16 @@ with tab1:
             if meas_roundness > LIMIT_ROUNDNESS or meas_step > LIMIT_STEP:
                 q_result = "FAIL (Quality)"
                 errors.append(f"❌ [품질 불량] 진원도/단차 기준 초과")
+                
+                # 긴급 조치 가이드 (품질 불량 시 표시)
+                with st.expander("🛠️ 긴급 조치 가이드 (Quality Fail)", expanded=True):
+                    st.error(f"🚨 비상: 품질 기준 초과 발생! (진원도: {meas_roundness}/{LIMIT_ROUNDNESS}µm, 단차: {meas_step}/{LIMIT_STEP}µm)")
+                    st.markdown("""
+                    **분석된 표준화 솔루션:**
+                    1. **바이트 위치**: '중' 또는 '중하' 확인
+                    2. **텐션**: 2.72 Kg 재설정
+                    3. **속도**: 2.5 단계 (16초) 확인
+                    """)
             elif errors: # If there are setting errors but no quality errors
                 q_result = "FAIL (Setting)"
 
