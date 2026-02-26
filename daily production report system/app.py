@@ -1,7 +1,8 @@
 
 import streamlit as st
 from datetime import datetime
-
+from streamlit_gsheets import GSheetsConnection
+import pandas as pd
 # --- 1. 페이지 설정 (태블릿 가로화면 최적화) ---
 st.set_page_config(page_title="조립 1라인 실시간 작업일보 (시범운영)", layout="wide", page_icon="📝")
 
@@ -290,3 +291,73 @@ with col_right:
         dr1.markdown(f"<div style='text-align:center; margin-top:8px;'><b>{circle_nums[i-1]}</b></div>", unsafe_allow_html=True)
         dr2.text_input("토크", key=f"torque_val_{i}", label_visibility="collapsed", placeholder="측정값 입력")
         st.markdown("<div style='margin-bottom: 5px;'></div>", unsafe_allow_html=True)
+# --- [추가 코드] 9. 구글 시트 통합 전송 로직 ---
+st.markdown("<br><br>", unsafe_allow_html=True)
+st.divider()
+
+# 구글 시트 연결
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+# 화면 하단 중앙에 커다란 전송 버튼 생성
+if st.button("🚀 오늘의 작업일보 구글 시트로 최종 전송하기", use_container_width=True):
+    data_to_send = []
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    date_str = work_date.strftime("%Y-%m-%d")
+
+    # 세션 스테이트(session_state)에 저장된 각 행의 입력값을 싹쓸이 수집
+    for slot in st.session_state.row_data:
+        row_id = slot['id']
+        time_slot = slot['time']
+
+        # 해당 행의 '기종명' 가져오기
+        prod = st.session_state.get(f"prod_{row_id}", "[기종 선택]")
+
+        # 기종이 선택된(작업이 진행된) 행만 데이터로 수집
+        if prod != "[기종 선택]":
+            inv_time = st.session_state.get(f"inv_time_{row_id}", 0)
+            actual = st.session_state.get(f"actual_{row_id}", 0)
+            def_name = st.session_state.get(f"defect_name_{row_id}", "[없음]")
+            def_qty = st.session_state.get(f"defect_qty_{row_id}", 0)
+            down_name = st.session_state.get(f"down_name_{row_id}", "[없음]")
+            down_qty = st.session_state.get(f"down_qty_{row_id}", 0)
+            supporter = st.session_state.get(f"supporter_{row_id}", "")
+
+            # 목표 UPH 재계산 (UI 표시용과 동일 로직)
+            target_qty = 0
+            if inv_time in [50, 60, 70]:
+                target_qty = PRODUCT_DB[prod].get(inv_time, 0)
+            else:
+                base_60 = PRODUCT_DB[prod].get(60, 0)
+                target_qty = round((base_60 / 60.0) * inv_time)
+
+            # 한 줄(Row)의 데이터를 딕셔너리로 묶기
+            data_to_send.append({
+                "Timestamp": current_time,
+                "Work_Date": date_str,
+                "Worker_Name": worker_name,
+                "Time_Slot": time_slot,
+                "Invested_Min": inv_time,
+                "Item_Name": prod,
+                "Target_UPH": target_qty,
+                "Actual_Qty": actual,
+                "Defect_Type": def_name if def_name != "[없음]" else "",
+                "Defect_Qty": def_qty,
+                "Downtime_Reason": down_name if down_name != "[없음]" else "",
+                "Downtime_Min": down_qty,
+                "Supporter": supporter
+            })
+
+    # 전송할 데이터가 1건이라도 있다면 구글 시트로 발사!
+    if len(data_to_send) > 0:
+        new_df = pd.DataFrame(data_to_send)
+        try:
+            existing_df = conn.read(worksheet="Sheet1")
+            updated_df = pd.concat([existing_df, new_df], ignore_index=True)
+            conn.update(worksheet="Sheet1", data=updated_df)
+            
+            st.success(f"🎉 성공! 총 {len(data_to_send)}건의 시간대별 실적이 구글 시트에 기록되었습니다!")
+            st.balloons() # 성공 축하 애니메이션
+        except Exception as e:
+            st.error(f"❌ 전송 오류가 발생했습니다. (Secrets 설정이나 시트 권한을 확인하세요): {e}")
+    else:
+        st.warning("⚠️ 전송할 데이터가 없습니다. (최소 1개 이상의 기종을 선택해 주세요.)")
