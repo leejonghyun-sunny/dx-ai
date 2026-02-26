@@ -3,10 +3,10 @@ from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 
-# --- 1. 페이지 설정 (태블릿 가로화면 최적화) ---
+# --- 1. 페이지 설정 ---
 st.set_page_config(page_title="조립 1라인 실시간 작업일보 (시범운영)", layout="wide", page_icon="📝")
 
-# --- CSS 주입 (number_input의 +/- 화살표 버튼 숨기기) ---
+# --- CSS 주입 ---
 st.markdown("""
 <style>
     input[type=number]::-webkit-outer-spin-button,
@@ -94,20 +94,30 @@ for idx, slot in enumerate(st.session_state.row_data):
     row_id = slot['id']
     c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11 = st.columns(cols_ratio)
     
+    # 1. 시간대
     if not slot['is_added']:
-        c1.markdown(f"{slot['time']} ({slot['default_duration']}분)")
+        c1.markdown(f"<div style='margin-top:5px;'>{slot['time']}<br><span style='font-size:0.8em; color:gray'>({slot['default_duration']}분)</span></div>", unsafe_allow_html=True)
     else:
-        c1.markdown("↳ (추가)")
+        c1.markdown("<div style='margin-top:5px; color:blue;'>↳ (추가)</div>", unsafe_allow_html=True)
         
+    # 2. 투입분
     invested_time = c2.number_input("투입분", value=slot['default_duration'] if not slot['is_added'] else 0, key=f"inv_time_{row_id}", label_visibility="collapsed")
+    
+    # 3. 기종선택
     row_product = c3.selectbox("기종", options=PRODUCT_LIST, key=f"prod_{row_id}", label_visibility="collapsed")
 
+    # 4. 목표수량 자동계산
     target_qty = 0
     if row_product != "[기종 선택]":
-        base_60 = PRODUCT_DB[row_product].get(60, 0)
-        target_qty = round((base_60 / 60.0) * invested_time)
+        if invested_time in [50, 60, 70]:
+            target_qty = PRODUCT_DB[row_product].get(invested_time, 0)
+        else:
+            base_60 = PRODUCT_DB[row_product].get(60, 0)
+            target_qty = round((base_60 / 60.0) * invested_time)
             
-    c4.markdown(f"**{target_qty}**")
+    c4.markdown(f"<div style='margin-top:5px; font-weight:bold; text-align:center;'>{target_qty}</div>", unsafe_allow_html=True)
+    
+    # 5. 실적 등 입력
     actual = c5.number_input("실적", min_value=0, key=f"actual_{row_id}", label_visibility="collapsed")
     defect_name = c6.selectbox("불량명", options=DEFECT_OUT_LIST, key=f"defect_name_{row_id}", label_visibility="collapsed")
     defect_qty = c7.number_input("불량", min_value=0, key=f"defect_qty_{row_id}", label_visibility="collapsed")
@@ -115,28 +125,50 @@ for idx, slot in enumerate(st.session_state.row_data):
     downtime_qty = c9.number_input("비가동분", min_value=0, key=f"down_qty_{row_id}", label_visibility="collapsed")
     supporter_name = c10.text_input("지원자", key=f"supporter_{row_id}", label_visibility="collapsed")
 
+    # 11. 관리 버튼
     if not slot['is_added']:
         c11.button("➕", key=f"add_{row_id}", on_click=cb_add_row, args=(idx, slot['time'], slot['default_duration']))
     else:
         c11.button("❌", key=f"del_{row_id}", on_click=cb_delete_row, args=(idx,))
 
-# --- 7. 전송 로직 ---
+# --- 7. 전송 로직 (중요! 누락된 데이터 수정됨) ---
 st.divider()
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 if st.button("🚀 오늘의 작업일보 구글 시트로 최종 전송하기", use_container_width=True):
     data_to_send = []
     curr_t = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    date_str = work_date.strftime("%Y-%m-%d")
+
     for s in st.session_state.row_data:
         r_id = s['id']
+        # 기종명 가져오기
         p = st.session_state.get(f"prod_{r_id}", "[기종 선택]")
+        
+        # 기종이 선택된 행만 전송
         if p != "[기종 선택]":
+            # 목표수량 재계산 (전송용)
+            i_time = st.session_state.get(f"inv_time_{r_id}", 0)
+            t_qty = 0
+            if i_time in [50, 60, 70]:
+                t_qty = PRODUCT_DB[p].get(i_time, 0)
+            else:
+                base_60 = PRODUCT_DB[p].get(60, 0)
+                t_qty = round((base_60 / 60.0) * i_time)
+            
+            # 데이터 포장 (모든 항목 포함!)
             data_to_send.append({
-                "Timestamp": curr_t, "Work_Date": work_date.strftime("%Y-%m-%d"),
-                "Worker_Name": worker_name, "Time_Slot": s['time'],
-                "Invested_Min": st.session_state.get(f"inv_time_{r_id}", 0),
-                "Item_Name": p, "Actual_Qty": st.session_state.get(f"actual_{r_id}", 0),
+                "Timestamp": curr_t,
+                "Work_Date": date_str,
+                "Worker_Name": worker_name,
+                "Time_Slot": s['time'],
+                "Invested_Min": i_time,
+                "Item_Name": p,
+                "Target_UPH": t_qty,  # 추가됨!
+                "Actual_Qty": st.session_state.get(f"actual_{r_id}", 0),
+                "Defect_Type": st.session_state.get(f"defect_name_{r_id}", "[없음]"), # 추가됨!
                 "Defect_Qty": st.session_state.get(f"defect_qty_{r_id}", 0),
+                "Downtime_Reason": st.session_state.get(f"down_name_{r_id}", "[없음]"), # 추가됨!
                 "Downtime_Min": st.session_state.get(f"down_qty_{r_id}", 0),
                 "Supporter": st.session_state.get(f"supporter_{r_id}", "")
             })
@@ -146,8 +178,8 @@ if st.button("🚀 오늘의 작업일보 구글 시트로 최종 전송하기",
             df = conn.read(worksheet="Sheet1")
             updated = pd.concat([df, pd.DataFrame(data_to_send)], ignore_index=True)
             conn.update(worksheet="Sheet1", data=updated)
-            st.success("✅ 전송 완료!"); st.balloons()
+            st.success(f"✅ 전송 완료! 총 {len(data_to_send)}건이 기록되었습니다."); st.balloons()
         except Exception as e:
-            st.error(f"❌ 오류: {e}")
+            st.error(f"❌ 오류가 발생했습니다: {e}")
     else:
-        st.warning("⚠️ 데이터를 입력해주세요.")
+        st.warning("⚠️ 전송할 데이터가 없습니다. 기종을 선택해주세요.")
