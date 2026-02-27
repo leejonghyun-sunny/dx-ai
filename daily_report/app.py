@@ -3,17 +3,16 @@ from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 
-# --- 1. 페이지 설정 (다크 테마 및 넓은 레이아웃) ---
-st.set_page_config(page_title="조립 1라인 실시간 작업일보", layout="wide")
+# --- 1. 페이지 설정 (이사님 취향의 다크/와이드 레이아웃) ---
+st.set_page_config(page_title="조립 1라인 스마트 작업일보", layout="wide")
 
-# 동영상 스타일 복구를 위한 맞춤형 CSS
+# UI 복구를 위한 맞춤형 CSS
 st.markdown("""
 <style>
     .main { background-color: #0e1117; }
     .stMetric { background-color: #1a1c24; padding: 15px; border-radius: 10px; border: 1px solid #30363d; }
-    .stButton>button { width: 100%; border-radius: 5px; }
-    div[data-testid="stExpander"] { border: none; background-color: transparent; }
-    .section-title { font-size: 20px; font-weight: bold; margin-top: 20px; margin-bottom: 10px; color: #ffffff; }
+    .section-title { font-size: 20px; font-weight: bold; margin-top: 30px; margin-bottom: 15px; color: #58a6ff; }
+    .stButton>button { width: 100%; height: 50px; font-weight: bold; background-color: #238636; color: white; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -36,16 +35,10 @@ PRODUCT_DB = {
     "90W(신일)": {50: 26, 60: 32, 70: 37}
 }
 
-TIME_SLOTS = [
-    {"time": "08:30~09:30", "dur": 60}, {"time": "09:30~10:30", "dur": 60},
-    {"time": "10:40~11:40", "dur": 60}, {"time": "11:40~12:30", "dur": 50},
-    {"time": "13:20~14:30", "dur": 70}, {"time": "14:30~15:30", "dur": 60},
-    {"time": "15:40~16:30", "dur": 50}, {"time": "16:30~17:30", "dur": 60},
-    {"time": "18:00~19:00", "dur": 60}, {"time": "19:00~20:00", "dur": 60}
-]
+TIME_SLOTS = ["08:30~09:30", "09:30~10:30", "10:40~11:40", "11:40~12:30", "13:20~14:30", "14:30~15:30", "15:40~16:30", "16:30~17:30", "18:00~19:00", "19:00~20:00"]
 
-# --- 3. 타이틀 및 상단 정보 (동영상 UI 복구) ---
-st.title("⚙️ 조립 1라인 실시간 작업일보 (시범운영)")
+# --- 3. 헤더 영역 ---
+st.title("⚙️ 조립 1라인 실시간 스마트 작업일보")
 
 col_top1, col_top2 = st.columns(2)
 with col_top1:
@@ -54,88 +47,106 @@ with col_top2:
     worker_name = st.text_input("👤 메인 작업자명", placeholder="성함을 입력하세요")
 
 # --- 4. 메인 작업 테이블 ---
-if 'rows' not in st.session_state:
-    st.session_state.rows = [{"id": i, "time": s["time"], "dur": s["dur"], "added": False} for i, s in enumerate(TIME_SLOTS)]
-    st.session_state.next_id = len(TIME_SLOTS)
-
-# 동영상 컬럼 구성: 시간대, 투입분, 기종명, 목표, 실적, 불량명, 불량, 비가동사유, 비가동분, 지원자, 관리
-cols_r = [1.2, 0.6, 1.8, 0.7, 0.7, 1.0, 0.6, 1.0, 0.7, 0.8, 0.5]
+st.markdown("<div class='section-title'>📊 시간대별 생산 실적 기록</div>", unsafe_allow_html=True)
+cols_r = [1.2, 0.6, 1.8, 0.7, 0.7, 1.0, 0.6, 1.0, 0.7, 0.8]
+headers = ["시간대", "투입분", "기종명", "목표", "실적", "불량명", "불량", "비가동사유", "비가동분", "지원자"]
 h_cols = st.columns(cols_r)
-headers = ["시간대", "투입분", "기종명", "**목표**", "실적", "불량명", "불량", "비가동사유", "비가동분", "지원자", "관리"]
-for i, h in enumerate(headers): h_cols[i].markdown(f"<div style='text-align:center; font-weight:bold;'>{h}</div>", unsafe_allow_html=True)
+for i, h in enumerate(headers):
+    h_cols[i].markdown(f"<div style='text-align:center; font-weight:bold; color:#8b949e;'>{h}</div>", unsafe_allow_html=True)
 
-total_actual, total_target, total_defect, total_down = 0, 0, 0, 0
+total_actual, total_target = 0, 0
 
-for idx, row in enumerate(st.session_state.rows):
-    r_id = row['id']
+for i, slot in enumerate(TIME_SLOTS):
     c = st.columns(cols_r)
+    c[0].write(f"**{slot}**")
     
-    c[0].write(row['time'])
-    inv_t = c[1].number_input("분", value=row['dur'], key=f"t_{r_id}", label_visibility="collapsed")
-    p_name = c[2].selectbox("기종", ["선택"] + list(PRODUCT_DB.keys()), key=f"p_{r_id}", label_visibility="collapsed")
+    # 투입분 (기본값 설정)
+    default_min = 60 if i not in [3, 6] else 50
+    inv_m = c[1].number_input("분", value=default_min, key=f"m_{i}", label_visibility="collapsed")
     
+    # 기종 및 목표
+    p_sel = c[2].selectbox("기종", ["선택"] + list(PRODUCT_DB.keys()), key=f"p_{i}", label_visibility="collapsed")
     target = 0
-    if p_name != "선택":
-        base = PRODUCT_DB[p_name].get(60, 0)
-        target = round((base/60)*inv_t) if inv_t not in PRODUCT_DB[p_name] else PRODUCT_DB[p_name][inv_t]
+    if p_sel != "선택":
+        base_60 = PRODUCT_DB[p_sel].get(60, 0)
+        target = PRODUCT_DB[p_sel].get(inv_m, round((base_60/60)*inv_m))
     c[3].markdown(f"<div style='text-align:center;'>{target}</div>", unsafe_allow_html=True)
     total_target += target
 
-    actual = c[4].number_input("실적", min_value=0, key=f"a_{r_id}", label_visibility="collapsed")
+    # 실적 및 부가정보
+    actual = c[4].number_input("실적", min_value=0, key=f"a_{i}", label_visibility="collapsed")
     total_actual += actual
     
-    c[5].selectbox("불량명", ["없음", "이음", "감소음", "찍힘", "파형"], key=f"dn_{r_id}", label_visibility="collapsed")
-    defect = c[6].number_input("불량", key=f"d_{r_id}", label_visibility="collapsed")
-    total_defect += defect
-    
-    c[7].selectbox("사유", ["없음", "셋업", "부품", "품질", "기타"], key=f"rn_{r_id}", label_visibility="collapsed")
-    down = c[8].number_input("분", key=f"dw_{r_id}", label_visibility="collapsed")
-    total_down += down
-    
-    c[9].text_input("지원", key=f"s_{r_id}", value="홍길동", label_visibility="collapsed")
-    
-    if row['added']:
-        if c[10].button("❌", key=f"del_{r_id}"): st.session_state.rows.pop(idx); st.rerun()
-    else:
-        if c[10].button("➕", key=f"add_{r_id}"): 
-            st.session_state.rows.insert(idx+1, {"id": st.session_state.next_id, "time": row['time'], "dur": 0, "added": True})
-            st.session_state.next_id += 1; st.rerun()
+    c[5].selectbox("불량명", ["없음", "이음", "찍힘", "파형", "기타"], key=f"dt_{i}", label_visibility="collapsed")
+    c[6].number_input("불량", key=f"dq_{i}", label_visibility="collapsed")
+    c[7].selectbox("사유", ["없음", "셋업", "부품", "품질", "설비"], key=f"dr_{i}", label_visibility="collapsed")
+    c[8].number_input("비가", key=f"dm_{i}", label_visibility="collapsed")
+    c[9].text_input("지원", key=f"sup_{i}", label_visibility="collapsed")
 
-# --- 5. 동영상 스타일 하단 지표 ---
-st.markdown("---")
+# --- 5. 실적 집계 지표 ---
+st.divider()
 m1, m2, m3, m4 = st.columns(4)
-achievement = (total_actual / total_target * 100) if total_target > 0 else 0
-m1.metric("생산 목표/실적", f"{total_target} / {total_actual}", f"{achievement:.1f}% 달성")
-m2.metric("총 불량 수량", f"{total_defect} EA", f"{(total_defect/total_actual*100 if total_actual>0 else 0):.1f}%", delta_color="inverse")
-m3.metric("총 비가동 시간", f"{total_down} 분")
-m4.metric("종합 생산성", f"{achievement:.1f}%")
+m1.metric("생산 목표", f"{total_target} EA")
+m2.metric("생산 실적", f"{total_actual} EA")
+diff = total_actual - total_target
+m3.metric("목표 대비", f"{diff} EA", delta=int(diff))
+achieve = (total_actual / total_target * 100) if total_target > 0 else 0
+m4.metric("종합 달성률", f"{achieve:.1f}%")
 
-# --- 6. 실적 분석 및 부가 정보 (동영상 하단 섹션 복구) ---
-st.markdown("<div class='section-title'>📊 실적 분석 및 부가 정보</div>", unsafe_allow_html=True)
-col_sub1, col_sub2, col_sub3 = st.columns([1.5, 2, 1.5])
+# --- 6. 품질 및 부가 정보 (이사님 요청 사항 - 하단 배치) ---
+st.markdown("<div class='section-title'>🔍 품질 점검 및 부가 정보</div>", unsafe_allow_html=True)
+q_col1, q_col2 = st.columns(2)
 
-with col_sub1:
-    st.subheader("📋 실적 분석")
-    analysis_df = pd.DataFrame({
-        "기종": [r for r in [st.session_state.get(f"p_{row['id']}") for row in st.session_state.rows] if r != "선택"],
-        "양품": [st.session_state.get(f"a_{row['id']}", 0) for row in st.session_state.rows if st.session_state.get(f"p_{row['id']}") != "선택"]
-    }).groupby("기종").sum().reset_index()
-    st.table(analysis_df)
+with q_col1:
+    st.subheader("📦 자재 확인 (Material Check)")
+    mat_check = st.checkbox("금일 투입 자재 이상 없음 (OK)", value=True)
+    mat_memo = st.text_input("자재 관련 특이사항", placeholder="LOT 번호 등 입력")
 
-with col_sub2:
-    st.subheader("📦 투입 부품 (자재 확인 및 LOT)")
-    for i in range(3):
-        sc1, sc2, sc3 = st.columns([1, 1, 0.5])
-        sc1.text_input(f"부품명 {i+1}", key=f"mat_n_{i}", label_visibility="collapsed", placeholder="부품명")
-        sc2.text_input(f"LOT No {i+1}", key=f"mat_l_{i}", label_visibility="collapsed", placeholder="LOT 번호")
-        sc3.checkbox("OK", key=f"mat_ok_{i}")
+with q_col2:
+    st.subheader("🔧 전동 드라이버 토크 점검")
+    torque_val = st.text_input("측정된 토크 값 (N.m)", placeholder="예: 3.5 / 3.4 / 3.5")
 
-with col_sub3:
-    st.subheader("🔧 전동 드라이버 점검 (토크)")
-    for i in range(4):
-        st.text_input(f"측정값 {i+1} (kgf·m)", key=f"trq_{i}", placeholder="측정값 입력")
-
-# --- 7. 최종 전송 ---
-if st.button("📊 오늘의 데이터 최종 전송 및 저장", type="primary", use_container_width=True):
-    # 구글 시트 전송 로직 (기존과 동일)
-    st.success("데이터가 구글 시트에 안전하게 저장되었습니다!"); st.balloons()
+# --- 7. 최종 구글 시트 전송 로직 ---
+st.markdown("---")
+if st.button("📊 오늘의 실적 데이터 최종 전송 및 저장", type="primary"):
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    final_data = []
+    # 시트 헤더 'Timestamp'와 일치 (이사님 수정 반영)
+    now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    for i, slot in enumerate(TIME_SLOTS):
+        p = st.session_state.get(f"p_{i}", "선택")
+        if p != "선택":
+            # 이사님의 구글 시트 헤더 명칭과 100% 일치
+            final_data.append({
+                "Timestamp": now_ts,
+                "Work_Date": work_date.strftime("%Y-%m-%d"),
+                "Worker_Name": worker_name,
+                "Time_Slot": slot,
+                "Invested_Min": st.session_state.get(f"m_{i}", 0),
+                "Item_Name": p,
+                "Target_UPH": 0, # 필요 시 자동 계산 로직 추가 가능
+                "Actual_Qty": st.session_state.get(f"a_{i}", 0),
+                "Defect_Type": st.session_state.get(f"dt_{i}", "없음"),
+                "Defect_Qty": st.session_state.get(f"dq_{i}", 0),
+                "Downtime_Reas": st.session_state.get(f"dr_{i}", "없음"),
+                "Downtime_Min": st.session_state.get(f"dm_{i}", 0),
+                "Supporter": st.session_state.get(f"sup_{i}", ""),
+                "Material_Check": "OK" if mat_check else "NG",
+                "Torque_Value": torque_val
+            })
+    
+    if final_data:
+        try:
+            # 기존 데이터 읽기 및 병합
+            df = conn.read(worksheet="Sheet1")
+            new_df = pd.DataFrame(final_data)
+            updated_df = pd.concat([df, new_df], ignore_index=True)
+            
+            # 시트 업데이트
+            conn.update(worksheet="Sheet1", data=updated_df)
+            st.success("✅ 실적 및 품질 데이터가 구글 시트에 성공적으로 저장되었습니다!"); st.balloons()
+        except Exception as e:
+            st.error(f"❌ 전송 실패: {e}\n\n시트의 헤더 명칭과 코드의 항목명이 일치하는지 확인해 주세요.")
+    else:
+        st.warning("⚠️ 입력된 데이터가 없습니다. 기종을 먼저 선택해 주세요.")
