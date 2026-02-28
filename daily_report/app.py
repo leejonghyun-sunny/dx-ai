@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 
-# --- 1. 페이지 설정 및 스타일 ---
+# --- 1. 페이지 설정 및 시각적 알람 스타일 ---
 st.set_page_config(page_title="조립 1라인 실시간 작업일보", layout="wide")
 
 st.markdown("""
@@ -18,7 +18,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. 데이터베이스 설정 ---
+# --- 2. 데이터베이스 설정 (전 기종 UPH 고정 완료) ---
 PRODUCT_DB = {
     "VE (태양)": 65, "100바 (태양)": 65, "6*14 (태양)": 65, "황동 (태양)": 40, "80각 (태양)": 42, "방화 (태양)": 65,
     "MC (태성)": 45, "90W (태성)": 45, "60W B/K (태성)": 30, "90W B/K (태성)": 30,
@@ -33,12 +33,12 @@ TIME_SLOTS_BASE = [
 ]
 
 # --- 3. 기본 정보 입력 ---
-st.title("⚙️ 조립 1라인 스마트 작업일보 (Ver 3.5)")
+st.title("⚙️ 조립 1라인 스마트 작업일보 (최종본)")
 c_info1, c_info2 = st.columns(2)
 with c_info1: work_date = st.date_input("🗓️ 작업일자", datetime.today())
-with c_info2: worker_name = st.text_input("👤 메인 작업자명", value="안희선")
+with c_info2: worker_name = st.text_input("👤 메인 작업자명", placeholder="작업자 성함 입력")
 
-# --- 4. 1. 실시간 생산 기록 ---
+# --- 4. 1. 실시간 생산 기록 (CT 정밀 계산 1순위 적용) ---
 st.markdown("<div class='section-title'>📊 1. 실시간 생산 기록</div>", unsafe_allow_html=True)
 
 if 'rows' not in st.session_state:
@@ -61,24 +61,23 @@ for idx, row in enumerate(st.session_state.rows):
     c = st.columns(cols_h)
     c[0].write(row['display_time'])
     
-    # ------------------------------------------------------------------
-    # [핵심 수술 부위: 스트림릿 캐시 무력화 및 이사님 계산식 강제 주입]
+    # [무결점 핵심 로직: CT 연동 생산분 강제 덮어쓰기]
     p_sel = st.session_state.get(f"p_{rid}", "선택")
     act_val = st.session_state.get(f"a_{rid}", 0)
     uph_base = PRODUCT_DB.get(p_sel, 65)
     
     if p_sel != "선택" and act_val > 0:
-        # 이사님 공식: 생산분 = (실적 * (3600 / UPH)) / 60
-        calc_m = round((act_val * (3600 / uph_base)) / 60, 1)
-        st.session_state[f"m_{rid}"] = float(calc_m) # 화면에 무조건 덮어쓰기
+        # 이사님 8단계 수식: (실적 * (3600 / UPH)) / 60
+        calculated_m = round((act_val * (3600 / uph_base)) / 60, 1)
+        st.session_state[f"m_{rid}"] = float(calculated_m)
     elif f"m_{rid}" not in st.session_state:
         st.session_state[f"m_{rid}"] = float(row['m'])
-    # ------------------------------------------------------------------
 
     inv_m = c[1].number_input("분", key=f"m_{rid}", label_visibility="collapsed")
-    c[2].selectbox("기종", ["선택"] + list(PRODUCT_DB.keys()), key=f"p_{rid}", label_visibility="collapsed")
+    p_name = c[2].selectbox("기종", ["선택"] + list(PRODUCT_DB.keys()), key=f"p_{rid}", label_visibility="collapsed")
     
-    target = round((PRODUCT_DB.get(p_sel, 0) / 60) * inv_m) if p_sel != "선택" else 0
+    # 목표 수량 자동 산출
+    target = round((PRODUCT_DB.get(p_name, 0) / 60) * inv_m) if p_name != "선택" else 0
     c[3].write(f"{target}")
 
     c[4].number_input("실적", min_value=0, key=f"a_{rid}", label_visibility="collapsed")
@@ -88,6 +87,7 @@ for idx, row in enumerate(st.session_state.rows):
     down_m = c[8].number_input("비가", key=f"dm_{rid}", label_visibility="collapsed", min_value=0)
     c[9].text_input("지원", key=f"s_{rid}", label_visibility="collapsed")
     
+    # 기종변경 및 시간 분할
     if c[10].button("➕ 기종변경", key=f"add_{rid}"):
         total_used = inv_m + down_m
         new_start_dt = row['start'] + timedelta(minutes=total_used)
@@ -102,9 +102,9 @@ for idx, row in enumerate(st.session_state.rows):
             st.session_state.next_id += 1
             st.rerun()
         else:
-            st.error(f"⚠️ 시간 초과: 현재 슬롯에서 {total_used}분(생산 {inv_m}분+셋업 {down_m}분)을 사용하여 잔여 시간이 없습니다.")
+            st.error(f"⚠️ 시간 초과: 현재 슬롯에서 {total_used}분(생산 {inv_m}분 + 셋업 {down_m}분)을 사용하여 잔여 시간이 없습니다.")
 
-# --- 5. 2. 실적 분석 및 품질 추적 ---
+# --- 5. 2. 실적 분석 및 품질 추적 (시간순 그룹핑) ---
 st.markdown("<div class='section-title'>📋 2. 실적 분석 및 품질 추적 (기종별 통합 관리)</div>", unsafe_allow_html=True)
 summary_data = []
 first_appearance = {}
@@ -131,7 +131,7 @@ if summary_data:
 else:
     st.info("실적 입력 시 기종별 합계 데이터가 투입 순서대로 자동 생성됩니다.")
 
-# --- 6. 3. 전동 드라이버 토크 측정 기록 ---
+# --- 6. 3. 전동 드라이버 토크 측정 기록 (스마트 알람 완벽 구동) ---
 st.markdown("<div class='section-title'>🔧 3. 전동 드라이버 토크 측정 기록</div>", unsafe_allow_html=True)
 
 torque_list = [st.session_state.get(f"torque_{k}", "").strip() for k in range(1, 6)]
@@ -144,4 +144,36 @@ with t_c1:
     for k in range(1, 6):
         tr = st.columns([0.4, 1.6, 1.0])
         tr[0].markdown(f"<div style='padding-top:10px;'>{k}번</div>", unsafe_allow_html=True)
-        t_val = tr[1].text_input(
+        t_val = tr[1].text_input(f"T_{k}", key=f"torque_{k}", label_visibility="collapsed", placeholder="Kgf/cm")
+        
+        if t_val:
+            try:
+                val = float(t_val)
+                if val >= 15: 
+                    tr[2].markdown('<div class="ok-label">OK</div>', unsafe_allow_html=True)
+                else: 
+                    tr[2].markdown('<div class="ng-label">NG</div>', unsafe_allow_html=True)
+                    st.error(f"{k}번 토크값이 불량입니다")
+                    valid_torque = False
+            except ValueError:
+                valid_torque = False
+        else: 
+            valid_torque = False
+
+with t_c2:
+    st.markdown('<div class="highlight-box"> 전동 드라이버 토크 실측값을 전동드라이버 번호대로 반드시 입력 하세요 !</div>', unsafe_allow_html=True)
+
+# --- 7. 데이터 전송 ---
+if st.button("📊 오늘의 실적 데이터 최종 전송 및 저장", type="primary", use_container_width=True):
+    if all(torque_list) and valid_torque:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        final_data = []
+        for r in st.session_state.rows:
+            rid = r['id']; p = st.session_state.get(f"p_{rid}", "선택")
+            if p != "선택":
+                final_data.append({"Timestamp": ts, "Work_Date": work_date.strftime("%Y-%m-%d"), "Worker_Name": worker_name, "Time_Slot": r['display_time'], "Item_Name": p, "Actual_Qty": st.session_state.get(f"a_{rid}", 0), "Defect_Qty": st.session_state.get(f"dq_{rid}", 0), "Material_Check": st.session_state.get(f"lot_total_{p}", ""), "Torque_Value": " / ".join(torque_list)})
+        if final_data:
+            df = conn.read(worksheet="Sheet1")
+            updated = pd.concat([df, pd.DataFrame(final_data)], ignore_index=True)
+            conn.update(worksheet="Sheet1", data=updated); st.success("✅ 전송 완료!"); st.balloons()
