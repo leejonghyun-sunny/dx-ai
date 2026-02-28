@@ -3,29 +3,32 @@ from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 
-# --- 1. 페이지 설정 (이사님 취향의 다크/와이드 레이아웃) ---
+# --- 1. 페이지 설정 (다크 테마 유지) ---
 st.set_page_config(page_title="조립 1라인 스마트 작업일보", layout="wide")
 
-# UI 복구를 위한 맞춤형 CSS
 st.markdown("""
 <style>
     .main { background-color: #0e1117; }
     .stMetric { background-color: #1a1c24; padding: 15px; border-radius: 10px; border: 1px solid #30363d; }
-    .section-title { font-size: 20px; font-weight: bold; margin-top: 30px; margin-bottom: 15px; color: #58a6ff; }
-    .stButton>button { width: 100%; height: 50px; font-weight: bold; background-color: #238636; color: white; }
+    .section-title { font-size: 18px; font-weight: bold; margin-top: 25px; margin-bottom: 10px; color: #58a6ff; border-left: 4px solid #58a6ff; padding-left: 10px; }
+    .stButton>button { width: 100%; height: 50px; background-color: #238636; color: white; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. 데이터베이스 설정 ---
+# --- 2. 데이터베이스 설정 (기종별 단독 선택형으로 완전 분리) ---
+# UPH가 같더라도 기종명을 각각의 키로 분리하여 선택 시 혼선 제거
 PRODUCT_DB = {
     "VE, 100바, 6*14, 방화": {50: 54, 60: 65, 70: 76},
     "황동": {50: 34, 60: 40, 70: 46},
     "80각": {50: 35, 60: 42, 70: 49},
     "MC, 90W(태성)": {50: 36, 60: 45, 70: 54},
-    "60W B/K, 90W B/K": {50: 25, 60: 30, 70: 35},
+    "60W B/K": {50: 25, 60: 30, 70: 35},
+    "90W B/K": {50: 25, 60: 30, 70: 35},
     "태광": {50: 47, 60: 55, 70: 62},
     "펜타포스(단독)": {50: 65, 60: 80, 70: 92},
-    "코르텍, 펜타포스(중문), 윈스터": {50: 46, 60: 54, 70: 62},
+    "코르텍": {50: 46, 60: 54, 70: 62},
+    "펜타포스(중문)": {50: 46, 60: 54, 70: 62},
+    "윈스터": {50: 46, 60: 54, 70: 62},
     "60W(동명)": {50: 45, 60: 53, 70: 62},
     "90W(동명)": {50: 33, 60: 40, 70: 47},
     "씨넷": {50: 80, 60: 88, 70: 95},
@@ -37,116 +40,114 @@ PRODUCT_DB = {
 
 TIME_SLOTS = ["08:30~09:30", "09:30~10:30", "10:40~11:40", "11:40~12:30", "13:20~14:30", "14:30~15:30", "15:40~16:30", "16:30~17:30", "18:00~19:00", "19:00~20:00"]
 
-# --- 3. 헤더 영역 ---
-st.title("⚙️ 조립 1라인 실시간 스마트 작업일보")
+# --- 3. 기본 정보 ---
+st.title("⚙️ 조립 1라인 실시간 작업일보")
 
-col_top1, col_top2 = st.columns(2)
-with col_top1:
-    work_date = st.date_input("🗓️ 작업일자", datetime.today())
-with col_top2:
-    worker_name = st.text_input("👤 메인 작업자명", placeholder="성함을 입력하세요")
+c1, c2 = st.columns(2)
+with c1: work_date = st.date_input("🗓️ 작업일자", datetime.today())
+with c2: worker_name = st.text_input("👤 메인 작업자명", placeholder="성함을 입력하세요")
 
-# --- 4. 메인 작업 테이블 ---
-st.markdown("<div class='section-title'>📊 시간대별 생산 실적 기록</div>", unsafe_allow_html=True)
+# --- 4. 메인 실적 테이블 (동영상 레이아웃 복구) ---
+st.markdown("<div class='section-title'>📊 실시간 생산 기록</div>", unsafe_allow_html=True)
 cols_r = [1.2, 0.6, 1.8, 0.7, 0.7, 1.0, 0.6, 1.0, 0.7, 0.8]
 headers = ["시간대", "투입분", "기종명", "목표", "실적", "불량명", "불량", "비가동사유", "비가동분", "지원자"]
 h_cols = st.columns(cols_r)
-for i, h in enumerate(headers):
-    h_cols[i].markdown(f"<div style='text-align:center; font-weight:bold; color:#8b949e;'>{h}</div>", unsafe_allow_html=True)
+for i, h in enumerate(headers): h_cols[i].markdown(f"**{h}**")
 
-total_actual, total_target = 0, 0
+total_actual, total_target, total_defect = 0, 0, 0
 
 for i, slot in enumerate(TIME_SLOTS):
     c = st.columns(cols_r)
-    c[0].write(f"**{slot}**")
-    
-    # 투입분 (기본값 설정)
-    default_min = 60 if i not in [3, 6] else 50
-    inv_m = c[1].number_input("분", value=default_min, key=f"m_{i}", label_visibility="collapsed")
-    
-    # 기종 및 목표
+    c[0].write(slot)
+    def_m = 60 if i not in [3, 6] else 50
+    inv_m = c[1].number_input("분", value=def_m, key=f"m_{i}", label_visibility="collapsed")
     p_sel = c[2].selectbox("기종", ["선택"] + list(PRODUCT_DB.keys()), key=f"p_{i}", label_visibility="collapsed")
+    
     target = 0
     if p_sel != "선택":
-        base_60 = PRODUCT_DB[p_sel].get(60, 0)
-        target = PRODUCT_DB[p_sel].get(inv_m, round((base_60/60)*inv_m))
-    c[3].markdown(f"<div style='text-align:center;'>{target}</div>", unsafe_allow_html=True)
+        base = PRODUCT_DB[p_sel].get(60, 0)
+        target = PRODUCT_DB[p_sel].get(inv_m, round((base/60)*inv_m))
+    c[3].write(f"{target}")
     total_target += target
 
-    # 실적 및 부가정보
     actual = c[4].number_input("실적", min_value=0, key=f"a_{i}", label_visibility="collapsed")
     total_actual += actual
     
-    c[5].selectbox("불량명", ["없음", "이음", "찍힘", "파형", "기타"], key=f"dt_{i}", label_visibility="collapsed")
-    c[6].number_input("불량", key=f"dq_{i}", label_visibility="collapsed")
-    c[7].selectbox("사유", ["없음", "셋업", "부품", "품질", "설비"], key=f"dr_{i}", label_visibility="collapsed")
-    c[8].number_input("비가", key=f"dm_{i}", label_visibility="collapsed")
-    c[9].text_input("지원", key=f"sup_{i}", label_visibility="collapsed")
-
-# --- 5. 실적 집계 지표 ---
-st.divider()
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("생산 목표", f"{total_target} EA")
-m2.metric("생산 실적", f"{total_actual} EA")
-diff = total_actual - total_target
-m3.metric("목표 대비", f"{diff} EA", delta=int(diff))
-achieve = (total_actual / total_target * 100) if total_target > 0 else 0
-m4.metric("종합 달성률", f"{achieve:.1f}%")
-
-# --- 6. 품질 및 부가 정보 (이사님 요청 사항 - 하단 배치) ---
-st.markdown("<div class='section-title'>🔍 품질 점검 및 부가 정보</div>", unsafe_allow_html=True)
-q_col1, q_col2 = st.columns(2)
-
-with q_col1:
-    st.subheader("📦 자재 확인 (Material Check)")
-    mat_check = st.checkbox("금일 투입 자재 이상 없음 (OK)", value=True)
-    mat_memo = st.text_input("자재 관련 특이사항", placeholder="LOT 번호 등 입력")
-
-with q_col2:
-    st.subheader("🔧 전동 드라이버 토크 점검")
-    torque_val = st.text_input("측정된 토크 값 (N.m)", placeholder="예: 3.5 / 3.4 / 3.5")
-
-# --- 7. 최종 구글 시트 전송 로직 ---
-st.markdown("---")
-if st.button("📊 오늘의 실적 데이터 최종 전송 및 저장", type="primary"):
-    conn = st.connection("gsheets", type=GSheetsConnection)
-    final_data = []
-    # 시트 헤더 'Timestamp'와 일치 (이사님 수정 반영)
-    now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    c[5].selectbox("불량명", ["없음", "이음", "찍힘", "파형"], key=f"dt_{i}", label_visibility="collapsed")
+    defect = c[6].number_input("불량", key=f"dq_{i}", label_visibility="collapsed")
+    total_defect += defect
     
-    for i, slot in enumerate(TIME_SLOTS):
+    c[7].selectbox("사유", ["없음", "셋업", "부품", "품질"], key=f"dr_{i}", label_visibility="collapsed")
+    c[8].number_input("비가", key=f"dm_{i}", label_visibility="collapsed")
+    c[9].text_input("지원", key=f"s_{i}", label_visibility="collapsed")
+
+# --- 5. 실적 분석 및 부가정보 (이사님 요청 사항 1번 완벽 반영) ---
+st.markdown("<div class='section-title'>📋 실적 분석 및 품질 추적 (LOT)</div>", unsafe_allow_html=True)
+# 실적 입력 시 기종별 자동 집계 및 양품/불량/LOT 입력란 구성
+summary_data = []
+for i in range(len(TIME_SLOTS)):
+    p = st.session_state.get(f"p_{i}", "선택")
+    if p != "선택":
+        summary_data.append({
+            "기종": p,
+            "실적": st.session_state.get(f"a_{i}", 0),
+            "불량": st.session_state.get(f"dq_{i}", 0)
+        })
+
+if summary_data:
+    df_sum = pd.DataFrame(summary_data).groupby("기종").sum().reset_index()
+    for idx, row in df_sum.iterrows():
+        sc1, sc2, sc3, sc4 = st.columns([1.5, 1, 1, 2])
+        sc1.write(f"**[{row['기종']}]**")
+        sc2.write(f"양품: {row['실적'] - row['불량']} EA")
+        sc3.write(f"불량: {row['불량']} EA")
+        st.session_state[f"lot_{row['기종']}"] = sc4.text_input(f"LOT 번호 입력 ({row['기종']})", key=f"lot_in_{idx}", placeholder="LOT No. 입력")
+else:
+    st.info("상단 테이블에 기종을 선택하고 실적을 입력하면 분석창이 자동 생성됩니다.")
+
+# --- 6. 투입부품 및 토크 기록 (이사님 요청 사항 2, 3번 반영) ---
+col_sub1, col_sub2 = st.columns(2)
+
+with col_sub1:
+    st.markdown("<div class='section-title'>📦 투입부품 (LOT)</div>")
+    # OK 란 제거, 부품명과 LOT만 기입하도록 수정
+    for i in range(3):
+        mat_c1, mat_c2 = st.columns([1, 1])
+        mat_c1.text_input(f"부품명 {i+1}", key=f"mat_n_{i}", label_visibility="collapsed", placeholder="부품명")
+        mat_c2.text_input(f"부품 LOT {i+1}", key=f"mat_l_{i}", label_visibility="collapsed", placeholder="LOT 번호")
+
+with col_sub2:
+    st.markdown("<div class='section-title'>🔧 전동드라이버 토크 (최초 성공 버전 UI)</div>")
+    # 최초 성공 버전의 2x2 또는 리스트 형태 UI 복구
+    t_c1, t_c2 = st.columns(2)
+    t_c1.text_input("측정 1 (N.m)", key="trq_1")
+    t_c2.text_input("측정 2 (N.m)", key="trq_2")
+    t_c1.text_input("측정 3 (N.m)", key="trq_3")
+    t_c2.text_input("측정 4 (N.m)", key="trq_4")
+
+# --- 7. 최종 전송 ---
+st.markdown("---")
+if st.button("📊 데이터 최종 전송 및 구글 시트 저장"):
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    final_rows = []
+    
+    for i in range(len(TIME_SLOTS)):
         p = st.session_state.get(f"p_{i}", "선택")
         if p != "선택":
-            # 이사님의 구글 시트 헤더 명칭과 100% 일치
-            final_data.append({
-                "Timestamp": now_ts,
-                "Work_Date": work_date.strftime("%Y-%m-%d"),
-                "Worker_Name": worker_name,
-                "Time_Slot": slot,
-                "Invested_Min": st.session_state.get(f"m_{i}", 0),
-                "Item_Name": p,
-                "Target_UPH": 0, # 필요 시 자동 계산 로직 추가 가능
-                "Actual_Qty": st.session_state.get(f"a_{i}", 0),
-                "Defect_Type": st.session_state.get(f"dt_{i}", "없음"),
+            final_rows.append({
+                "Timestamp": ts, "Work_Date": work_date.strftime("%Y-%m-%d"), "Worker_Name": worker_name,
+                "Time_Slot": TIME_SLOTS[i], "Invested_Min": st.session_state.get(f"m_{i}", 0),
+                "Item_Name": p, "Actual_Qty": st.session_state.get(f"a_{i}", 0),
                 "Defect_Qty": st.session_state.get(f"dq_{i}", 0),
-                "Downtime_Reas": st.session_state.get(f"dr_{i}", "없음"),
-                "Downtime_Min": st.session_state.get(f"dm_{i}", 0),
-                "Supporter": st.session_state.get(f"sup_{i}", ""),
-                "Material_Check": "OK" if mat_check else "NG",
-                "Torque_Value": torque_val
+                "Material_Check": st.session_state.get(f"lot_{p}", ""), # 분석란에서 입력한 LOT 자동 연동
+                "Torque_Value": f"{st.session_state.get('trq_1','')} / {st.session_state.get('trq_2','')}"
             })
     
-    if final_data:
+    if final_rows:
         try:
-            # 기존 데이터 읽기 및 병합
             df = conn.read(worksheet="Sheet1")
-            new_df = pd.DataFrame(final_data)
-            updated_df = pd.concat([df, new_df], ignore_index=True)
-            
-            # 시트 업데이트
-            conn.update(worksheet="Sheet1", data=updated_df)
-            st.success("✅ 실적 및 품질 데이터가 구글 시트에 성공적으로 저장되었습니다!"); st.balloons()
-        except Exception as e:
-            st.error(f"❌ 전송 실패: {e}\n\n시트의 헤더 명칭과 코드의 항목명이 일치하는지 확인해 주세요.")
-    else:
-        st.warning("⚠️ 입력된 데이터가 없습니다. 기종을 먼저 선택해 주세요.")
+            updated = pd.concat([df, pd.DataFrame(final_rows)], ignore_index=True)
+            conn.update(worksheet="Sheet1", data=updated)
+            st.success("✅ 성공! 구글 시트에 데이터가 정확히 저장되었습니다."); st.balloons()
+        except Exception as e: st.error(f"오류: {e}")
