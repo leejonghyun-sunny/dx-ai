@@ -1,5 +1,5 @@
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, timedelta
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 
@@ -14,6 +14,7 @@ st.markdown("""
     .highlight-box { background-color: yellow; color: red; padding: 12px; border-radius: 5px; font-weight: bold; text-align: center; margin-bottom: 15px; border: 2px solid red; font-size: 18px; }
     .ok-label { background-color: #d4edda; color: #004085; padding: 5px 10px; border-radius: 5px; font-weight: bold; text-align: center; }
     .ng-label { background-color: #f8d7da; color: #721c24; padding: 5px 10px; border-radius: 5px; font-weight: bold; text-align: center; border: 1px solid red; }
+    .stButton>button { width: 100%; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -32,47 +33,85 @@ PRODUCT_DB = {
     "현대": {50: 50, 60: 58, 70: 65}, "H&T": {50: 54, 60: 60, 70: 66}
 }
 
-TIME_SLOTS = ["08:30~09:30", "09:30~10:30", "10:40~11:40", "11:40~12:30", "13:20~14:30", "14:30~15:30", "15:40~16:30", "16:30~17:30", "18:00~19:00", "19:00~20:00"]
+TIME_SLOTS_BASE = [
+    ("08:30", "09:30"), ("09:30", "10:30"), ("10:40", "11:40"), ("11:40", "12:30"),
+    ("13:20", "14:30"), ("14:30", "15:30"), ("15:40", "16:30"), ("16:30", "17:30"),
+    ("18:00", "19:00"), ("19:00", "20:00")
+]
 
 # --- 3. 헤더 정보 ---
-st.title("⚙️ 조립 1라인 스마트 작업일보 (Ver 2.8)")
+st.title("⚙️ 조립 1라인 스마트 작업일보 (Ver 2.9)")
 c1, c2 = st.columns(2)
 with c1: work_date = st.date_input("🗓️ 작업일자", datetime.today())
 with c2: worker_name = st.text_input("👤 메인 작업자명", placeholder="성함을 입력하세요")
 
-# --- 4. 1. 실시간 생산 기록 ---
+# --- 4. 1. 실시간 생산 기록 (기종 변경 시간 자동 연동) ---
 st.markdown("<div class='section-title'>📊 1. 실시간 생산 기록</div>", unsafe_allow_html=True)
-if 'rows' not in st.session_state:
-    st.session_state.rows = [{"id": i, "time": slot, "m": 60 if i not in [3, 6] else 50} for i, slot in enumerate(TIME_SLOTS)]
-    st.session_state.next_id = len(TIME_SLOTS)
 
-cols_h = [1.2, 0.6, 1.8, 0.7, 0.7, 1.0, 0.6, 1.0, 0.7, 0.8, 0.5]
+if 'rows' not in st.session_state:
+    st.session_state.rows = []
+    for i, (start, end) in enumerate(TIME_SLOTS_BASE):
+        st.session_state.rows.append({
+            "id": i,
+            "display_time": f"{start}~{end}",
+            "start_time": datetime.strptime(start, "%H:%M"),
+            "end_time": datetime.strptime(end, "%H:%M"),
+            "m": 60 if i not in [3, 6] else 50
+        })
+    st.session_state.next_id = len(TIME_SLOTS_BASE)
+
+cols_h = [1.3, 0.6, 1.8, 0.7, 0.7, 1.0, 0.6, 1.0, 0.7, 0.8, 0.8]
 h_cols = st.columns(cols_h)
-for i, h in enumerate(["시간대", "분", "기종명", "목표", "실적", "불량명", "불량", "사유", "비가", "지원", "추가"]): h_cols[i].markdown(f"**{h}**")
+for i, h in enumerate(["시간대", "분", "기종명", "목표", "실적", "불량명", "불량", "사유", "비가", "지원", "기종변경"]): 
+    h_cols[i].markdown(f"**{h}**")
 
 for idx, row in enumerate(st.session_state.rows):
     rid = row['id']
     c = st.columns(cols_h)
-    c[0].write(row['time'])
+    
+    # 시간대 표시
+    c[0].write(row['display_time'])
+    
+    # 투입분 및 기종 선택
     inv_m = c[1].number_input("분", value=row['m'], key=f"m_{rid}", label_visibility="collapsed")
     p_sel = c[2].selectbox("기종", ["선택"] + list(PRODUCT_DB.keys()), key=f"p_{rid}", label_visibility="collapsed")
+    
+    # 목표 자동 계산
     target = 0
     if p_sel != "선택":
         base = PRODUCT_DB[p_sel].get(60, 0)
         target = PRODUCT_DB[p_sel].get(inv_m, round((base/60)*inv_m))
     c[3].write(f"{target}")
+
+    # 실적 및 품질 데이터
     c[4].number_input("실적", min_value=0, key=f"a_{rid}", label_visibility="collapsed")
     c[5].selectbox("불량명", ["없음", "이음", "찍힘", "파형"], key=f"dt_{rid}", label_visibility="collapsed")
     c[6].number_input("불량", key=f"dq_{rid}", label_visibility="collapsed")
     c[7].selectbox("사유", ["없음", "셋업", "부품", "품질"], key=f"dr_{rid}", label_visibility="collapsed")
-    c[8].number_input("비가", key=f"dm_{rid}", label_visibility="collapsed")
+    down_m = c[8].number_input("비가", key=f"dm_{rid}", label_visibility="collapsed")
     c[9].text_input("지원", key=f"s_{rid}", label_visibility="collapsed")
-    if c[10].button("➕", key=f"add_{rid}"):
-        st.session_state.rows.insert(idx+1, {"id": st.session_state.next_id, "time": row['time'], "m": 0})
+    
+    # [기종변경] 버튼: 셋업 시간을 감안하여 시간대 자동 분할
+    if c[10].button("➕ 기종변경", key=f"add_{rid}"):
+        # 새로운 시작 시간 = 현재 행 시작 시간 + 작업분 + 비가동(셋업)분
+        new_start_dt = row['start_time'] + timedelta(minutes=inv_m + down_m)
+        new_start_str = new_start_dt.strftime("%H:%M")
+        original_end_str = row['end_time'].strftime("%H:%M")
+        
+        # 남은 시간 계산
+        remaining_m = int((row['end_time'] - new_start_dt).total_seconds() / 60)
+        
+        st.session_state.rows.insert(idx + 1, {
+            "id": st.session_state.next_id,
+            "display_time": f"{new_start_str}~{original_end_str}",
+            "start_time": new_start_dt,
+            "end_time": row['end_time'],
+            "m": max(0, remaining_m)
+        })
         st.session_state.next_id += 1
         st.rerun()
 
-# --- 5. 2. 실적 분석 및 품질 추적 (통합 관리) ---
+# --- 5. 2. 실적 분석 및 품질 추적 (기종별 통합 + 시간순) ---
 st.markdown("<div class='section-title'>📋 2. 실적 분석 및 품질 추적 (기종별 통합 관리)</div>", unsafe_allow_html=True)
 summary_data = []
 first_appearance = {}
@@ -102,10 +141,9 @@ if summary_data:
 else:
     st.info("실적 입력 시 기종별 합계 데이터가 투입 순서대로 자동 생성됩니다.")
 
-# --- 6. 3. 전동 드라이버 토크 측정 기록 (Ver 2.8 스마트 알람) ---
+# --- 6. 3. 전동 드라이버 토크 측정 기록 (Ver 2.8 스마트 알람 계승) ---
 st.markdown("<div class='section-title'>🔧 3. 전동 드라이버 토크 측정 기록</div>", unsafe_allow_html=True)
 
-# 알람 로직: 5개 모두 비어있는 경우에만 독려 문구 출력
 torque_list = [st.session_state.get(f"torque_{k}", "").strip() for k in range(1, 6)]
 if all(v == "" for v in torque_list):
     st.markdown('<div class="highlight-box">전동드라이버 토크 측정 하세요</div>', unsafe_allow_html=True)
@@ -118,7 +156,6 @@ with t_c1:
         tr[0].markdown(f"<div style='padding-top:10px;'>{k}번</div>", unsafe_allow_html=True)
         t_val = tr[1].text_input(f"T_{k}", key=f"torque_{k}", label_visibility="collapsed", placeholder="Kgf/cm")
         
-        # SPEC 판정 로직 (15 Kgf/cm 이상 합격)
         if t_val:
             try:
                 val = float(t_val)
@@ -138,13 +175,13 @@ with t_c2:
     st.markdown('<div style="background-color: yellow; color: red; padding: 10px; border: 2px solid red; font-weight: bold; text-align: center;">전동 드라이버 토크 실측값을 전동드라이버 번호대로 반드시 입력 하세요 !</div>', unsafe_allow_html=True)
     st.info("💡 판정 기준: 15 Kgf/cm 이상 (합격시 녹색 OK / 불합격시 적색 NG)")
 
-# --- 7. 전송 ---
+# --- 7. 데이터 전송 ---
 st.markdown("---")
 if st.button("📊 오늘의 실적 데이터 최종 전송 및 저장", type="primary", use_container_width=True):
     if not all(torque_list):
         st.error("전동드라이버 토크를 모두 입력해야 전송 가능합니다.")
     elif not valid_torque:
-        st.error("토크값이 SPEC에 미달하거나 잘못된 값이 있습니다. 확인 후 다시 전송하세요.")
+        st.error("토크값이 SPEC에 미달하거나 잘못된 값이 있습니다.")
     else:
         conn = st.connection("gsheets", type=GSheetsConnection)
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -153,7 +190,7 @@ if st.button("📊 오늘의 실적 데이터 최종 전송 및 저장", type="p
             rid = r['id']
             p = st.session_state.get(f"p_{rid}", "선택")
             if p != "선택":
-                final_data.append({"Timestamp": ts, "Work_Date": work_date.strftime("%Y-%m-%d"), "Worker_Name": worker_name, "Time_Slot": r['time'], "Item_Name": p, "Actual_Qty": st.session_state.get(f"a_{rid}", 0), "Defect_Qty": st.session_state.get(f"dq_{rid}", 0), "Material_Check": st.session_state.get(f"lot_total_{p}", ""), "Torque_Value": " / ".join(torque_list)})
+                final_data.append({"Timestamp": ts, "Work_Date": work_date.strftime("%Y-%m-%d"), "Worker_Name": worker_name, "Time_Slot": r['display_time'], "Item_Name": p, "Actual_Qty": st.session_state.get(f"a_{rid}", 0), "Defect_Qty": st.session_state.get(f"dq_{rid}", 0), "Material_Check": st.session_state.get(f"lot_total_{p}", ""), "Torque_Value": " / ".join(torque_list)})
         if final_data:
             try:
                 df = conn.read(worksheet="Sheet1")
