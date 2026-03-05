@@ -32,12 +32,12 @@ TIME_SLOTS_BASE = [
 ]
 
 # --- 3. 기본 정보 입력 ---
-st.title("⚙️ 조립 1라인 스마트 작업일보 (Ver 4.1)")
+st.title("⚙️ 조립 1라인 스마트 작업일보 (최종 완성본)")
 c_info1, c_info2 = st.columns(2)
 with c_info1: work_date = st.date_input("🗓️ 작업일자", datetime.today())
 with c_info2: worker_name = st.text_input("👤 메인 작업자명", placeholder="작업자 성함 입력")
 
-# --- 4. 1. 실시간 생산 기록 ---
+# --- 4. 1. 실시간 생산 기록 (이사님 CT 정밀 로직 및 목표 고정 적용) ---
 st.markdown("<div class='section-title'>📊 1. 실시간 생산 기록</div>", unsafe_allow_html=True)
 
 if 'rows' not in st.session_state:
@@ -65,9 +65,7 @@ for idx, row in enumerate(st.session_state.rows):
     act_val = st.session_state.get(f"a_{rid}", 0)
     uph_base = PRODUCT_DB.get(p_sel, 65)
 
-    # [이사님 개선사항 핵심 로직]
-    # 1. 원본 슬롯(is_split=False)은 기존처럼 실적에 따라 분이 변함
-    # 2. 기종변경 슬롯(is_split=True)은 분과 목표가 'Lock' 되어 실적 입력에 영향받지 않음
+    # [핵심 로직]
     if row['is_split']:
         inv_m = c[1].number_input("분", value=float(row['m']), key=f"m_{rid}", disabled=True, label_visibility="collapsed")
         target = row['fixed_target']
@@ -75,11 +73,13 @@ for idx, row in enumerate(st.session_state.rows):
         if p_sel != "선택" and act_val > 0:
             calc_m = round((act_val * (3600 / uph_base)) / 60, 1)
             st.session_state[f"m_{rid}"] = float(calc_m)
+        elif f"m_{rid}" not in st.session_state:
+            st.session_state[f"m_{rid}"] = float(row['m'])
         inv_m = c[1].number_input("분", key=f"m_{rid}", label_visibility="collapsed")
         target = round((uph_base / 60) * inv_m) if p_sel != "선택" else 0
 
     c[2].selectbox("기종", ["선택"] + list(PRODUCT_DB.keys()), key=f"p_{rid}", label_visibility="collapsed")
-    c[3].write(f"**{target}**") # 고정된 목표 수량 표시
+    c[3].write(f"**{target}**") 
 
     c[4].number_input("실적", min_value=0, key=f"a_{rid}", label_visibility="collapsed")
     c[5].selectbox("불량명", ["없음", "이음", "찍힘", "파형"], key=f"dt_{rid}", label_visibility="collapsed")
@@ -88,27 +88,87 @@ for idx, row in enumerate(st.session_state.rows):
     down_m = c[8].number_input("비가", key=f"dm_{rid}", label_visibility="collapsed", min_value=0)
     c[9].text_input("지원", key=f"s_{rid}", label_visibility="collapsed")
     
-    # 기종변경 버튼 클릭 시 "목표 수량"을 계산하여 고정(Lock)
     if c[10].button("➕ 기종변경", key=f"add_{rid}"):
         total_used = inv_m + down_m
         new_start_dt = row['start'] + timedelta(minutes=total_used)
-        
         if new_start_dt < row['end']:
             rem_m = round((row['end'] - new_start_dt).total_seconds() / 60, 1)
-            # 이사님 지시: 다음 슬롯 기종은 선택 전이라도 현재 UPH 기준으로 가목표 설정(이후 기종 선택 시 갱신 가능하게 하거나 현재값 고정)
-            # 여기서는 이사님의 7번 항목 "12.2개 목표" 처럼 다음 행 생성 시 '분'에 따른 목표를 고정합니다.
             st.session_state.rows.insert(idx + 1, {
                 "id": st.session_state.next_id,
                 "display_time": f"{new_start_dt.strftime('%H:%M')}~{row['end'].strftime('%H:%M')}",
                 "start": new_start_dt, "end": row['end'], 
                 "m": rem_m,
-                "is_split": True, # 목표 수량 고정 모드 활성화
-                "fixed_target": round((uph_base / 60) * rem_m, 1) # CT 기반 목표 수량 고정
+                "is_split": True, 
+                "fixed_target": round((uph_base / 60) * rem_m, 1) 
             })
             st.session_state.next_id += 1
             st.rerun()
         else:
-            st.error(f"⚠️ 시간 초과: 현재 슬롯의 잔여 시간이 없습니다.")
+            st.error(f"⚠️ 현재 시간대에서 더 이상의 기종변경이 불가능합니다.")
 
-# (이하 분석 및 토크 알람 로직은 이전과 동일하게 유지)
-# ... [중합 로직 생략] ...
+# --- 5. 2. 실적 분석 및 품질 추적 (종합 실적 집계) ---
+st.markdown("<div class='section-title'>📋 2. 실적 분석 및 품질 추적 (기종별 통합 관리)</div>", unsafe_allow_html=True)
+summary_data = []
+first_appearance = {}
+for idx, r in enumerate(st.session_state.rows):
+    rid = r['id']
+    p_name = st.session_state.get(f"p_{rid}", "선택")
+    if p_name != "선택":
+        summary_data.append({"p_name": p_name, "actual": st.session_state.get(f"a_{rid}", 0), "defect": st.session_state.get(f"dq_{rid}", 0)})
+        if p_name not in first_appearance: first_appearance[p_name] = idx
+
+if summary_data:
+    df_sum = pd.DataFrame(summary_data).groupby("p_name").agg({'actual': 'sum', 'defect': 'sum'}).reset_index()
+    df_sum['f_idx'] = df_sum['p_name'].map(first_appearance)
+    df_sum = df_sum.sort_values(by='f_idx').reset_index(drop=True)
+    ah_cols = st.columns([1.5, 1, 1, 1, 2.5])
+    for i, h in enumerate(["기종명(합계)", "양품수량", "불량수량", "불량율(%)", "LOT 넘버 입력"]): ah_cols[i].markdown(f"**{h}**")
+    for idx, row in df_sum.iterrows():
+        ac = st.columns([1.5, 1, 1, 1, 2.5])
+        good = row['actual'] - row['defect']
+        rate = (row['defect'] / row['actual'] * 100) if row['actual'] > 0 else 0
+        ac[0].write(f"**{row['p_name']}**")
+        ac[1].write(f"{good} EA"); ac[2].write(f"{row['defect']} EA"); ac[3].write(f"{rate:.1f}%")
+        st.session_state[f"lot_total_{row['p_name']}"] = ac[4].text_input(f"LOT ({row['p_name']})", key=f"lot_sum_{idx}", label_visibility="collapsed", placeholder="LOT 직접입력")
+else:
+    st.info("실적 입력 시 기종별 합계 데이터가 자동으로 집계됩니다.")
+
+# --- 6. 3. 전동 드라이버 토크 측정 기록 (스마트 알람) ---
+st.markdown("<div class='section-title'>🔧 3. 전동 드라이버 토크 측정 기록</div>", unsafe_allow_html=True)
+torque_list = [st.session_state.get(f"torque_{k}", "").strip() for k in range(1, 6)]
+if all(v == "" for v in torque_list):
+    st.markdown('<div class="highlight-box">전동드라이버 토크 측정 하세요</div>', unsafe_allow_html=True)
+
+t_c1, t_c2 = st.columns([1.5, 2.5])
+with t_c1:
+    valid_torque = True
+    for k in range(1, 6):
+        tr = st.columns([0.4, 1.6, 1.0])
+        tr[0].markdown(f"<div style='padding-top:10px;'>{k}번</div>", unsafe_allow_html=True)
+        t_val = tr[1].text_input(f"T_{k}", key=f"torque_{k}", label_visibility="collapsed", placeholder="Kgf/cm")
+        if t_val:
+            try:
+                val = float(t_val)
+                if val >= 15: tr[2].markdown('<div class="ok-label">OK</div>', unsafe_allow_html=True)
+                else: 
+                    tr[2].markdown('<div class="ng-label">NG</div>', unsafe_allow_html=True)
+                    st.error(f"{k}번 토크 불량!"); valid_torque = False
+            except: valid_torque = False
+        else: valid_torque = False
+with t_c2:
+    st.markdown('<div class="highlight-box"> 전동 드라이버 토크 실측값을 전동드라이버 번호대로 반드시 입력 하세요 !</div>', unsafe_allow_html=True)
+
+# --- 7. 데이터 최종 전송 ---
+if st.button("📊 오늘의 실적 데이터 최종 전송 및 저장", type="primary", use_container_width=True):
+    if all(torque_list) and valid_torque:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        final_data = []
+        for r in st.session_state.rows:
+            rid = r['id']; p = st.session_state.get(f"p_{rid}", "선택")
+            if p != "선택":
+                final_data.append({"Timestamp": ts, "Work_Date": work_date.strftime("%Y-%m-%d"), "Worker_Name": worker_name, "Time_Slot": r['display_time'], "Item_Name": p, "Actual_Qty": st.session_state.get(f"a_{rid}", 0), "Defect_Qty": st.session_state.get(f"dq_{rid}", 0), "Material_Check": st.session_state.get(f"lot_total_{p}", ""), "Torque_Value": " / ".join(torque_list)})
+        if final_data:
+            df = conn.read(worksheet="Sheet1")
+            updated = pd.concat([df, pd.DataFrame(final_data)], ignore_index=True)
+            conn.update(worksheet="Sheet1", data=updated); st.success("✅ 전송 완료!"); st.balloons()
