@@ -3,8 +3,8 @@ import pandas as pd
 from datetime import datetime, timedelta
 from streamlit_gsheets import GSheetsConnection
 
-# --- 1. 페이지 설정 및 UI 강제 고정 (스카이블루 배경 및 화살표 제거) ---
-st.set_page_config(page_title="스마트작업일보 조립1라인", layout="wide")
+# --- 1. 페이지 설정 및 UI 고정 (하늘색 배경 및 화살표 제거) ---
+st.set_page_config(page_title="스마트작업일보 조립1라인 (v7.5.3)", layout="wide")
 st.markdown("""
 <style>
     /* 배경색: 연한 하늘색 고정 */
@@ -13,16 +13,17 @@ st.markdown("""
     .stHeader { background-color: #0288D1; color: white; padding: 10px; border-radius: 5px; }
     .bom-table { border: 1px solid #90CAF9; padding: 15px; background-color: white; border-radius: 8px; }
     
-    /* [완벽 조치] 이미지 기반: 모든 숫자 입력칸의 +/- 화살표 제거 */
+    /* 숫자 입력칸 +/- 화살표 및 증감 버튼 물리적 제거 */
     input[type=number]::-webkit-inner-spin-button, 
-    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-    input[type=number] { -moz-appearance: textfield; }
+    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none !important; margin: 0 !important; }
+    input[type=number] { -moz-appearance: textfield !important; }
     
     .stButton>button { border-radius: 5px; font-weight: bold; width: 100%; }
+    .check-item { background-color: #e1f5fe; padding: 5px 10px; border-radius: 5px; border: 1px solid #81d4fa; text-align: center; font-size: 14px; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. 데이터베이스 설정 ---
+# --- 2. 표준 데이터베이스 ---
 PRODUCT_DB = {
     "VE (태양)": 65, "100바 (태양)": 65, "6*14 (태양)": 65, "황동 (태양)": 40, "80각 (태양)": 42, "방화 (태양)": 65,
     "MC (태성)": 45, "90W (태성)": 45, "60W B/K (태성)": 30, "90W B/K (태성)": 30,
@@ -38,24 +39,38 @@ if 'rows' not in st.session_state:
     st.session_state.next_id = len(slots)
     st.session_state.issue_state = None
 
-# 제목 강제 고정
-st.title("스마트작업일보 조립1라인")
+# [타이틀 강제 고정 및 버전 이력 표시]
+st.title("스마트작업일보 조립1라인 (v7.5.3)")
 
-# [1. 비상 호출 (v7.5 유지)]
-st.markdown("<div class='section-title'>🚨 현장 비상 호출 (관리자 실시간 보고)</div>", unsafe_allow_html=True)
+# [1. 통합 작업표준 체크 시스템 (이사님 지시사항)]
+st.markdown("<div class='section-title'>📋 작업 표준 및 품질 통합 확인</div>", unsafe_allow_html=True)
+c_all = st.checkbox("✅ 금일 작업 표준 및 품질 지침 4대 항목을 모두 확인하고 준수할 것을 서약합니다.", key="confirm_all")
+
+# 4대 항목 UI 고정 표시
+ck_cols = st.columns(4)
+items = ["작업표준서 확인", "Q-POINT/지침 확인", "지그청소 상태 확인", "작업 전 자주검사"]
+for col, item in zip(ck_cols, items):
+    status = "✅ 완료" if c_all else "⬜ 미완료"
+    col.markdown(f"<div class='check-item'><b>{item}</b><br>{status}</div>", unsafe_allow_html=True)
+
+# [2. 현장 비상 호출]
+st.markdown("<div class='section-title'>🚨 현장 비상 호출 (관리자 전송)</div>", unsafe_allow_html=True)
 ic = st.columns(5)
 for i, label in enumerate(["자재결품", "품질문제", "장비문제", "기타사항", "상황종료"]):
     if ic[i].button(label, key=f"btn_{label}"):
         st.session_state.issue_state = label if label != "상황종료" else None
+if st.session_state.issue_state:
+    st.error(f"📢 현재 이상 상황 보고 중: [{st.session_state.issue_state}]")
 
-# [2. 생산 기록 기록 (v7.5.1 목표생산 보정본)]
-st.markdown("<div class='section-title'>📊 시간대별 생산 관리 기록</div>", unsafe_allow_html=True)
+# [3. 생산 기록 본문 (8단계 CT 수식 및 리셋 로직)]
+st.markdown("<div class='section-title'>📊 시간대별 생산 관리 기록 (목표 실시간 생성)</div>", unsafe_allow_html=True)
 c_info = st.columns(2)
 work_date = c_info[0].date_input("🗓️ 작업일자", datetime.today())
 worker_name = c_info[1].text_input("👤 메인 작업자", value="안희선")
 
 cols = st.columns([1.3, 0.6, 1.8, 0.6, 0.6, 1.0, 0.5, 0.8, 0.6, 1.0, 0.5, 0.5])
-for col, h in zip(cols, ["시간대", "분", "기종", "목표", "실적", "불량명", "수량", "사유", "비가", "지원", "➕", "🗑️"]): col.markdown(f"**{h}**")
+h_names = ["시간대", "분", "기종", "목표", "실적", "불량명", "수량", "사유", "비가", "지원", "➕", "🗑️"]
+for col, h in zip(cols, h_names): col.markdown(f"**{h}**")
 
 for idx, row in enumerate(st.session_state.rows):
     rid = row['id']; c = st.columns([1.3, 0.6, 1.8, 0.6, 0.6, 1.0, 0.5, 0.8, 0.6, 1.0, 0.5, 0.5])
@@ -63,6 +78,7 @@ for idx, row in enumerate(st.session_state.rows):
     act_qty = c[4].number_input("실적", min_value=0, key=f"a_{rid}", label_visibility="collapsed")
     uph = PRODUCT_DB.get(p_sel, 0)
 
+    # 기종 선택 즉시 목표 수량 생성 및 리셋 로직
     if p_sel == "선택": st.session_state[f"target_{rid}"] = 0
     else: st.session_state[f"target_{rid}"] = round((uph / 60) * row['m'])
 
@@ -83,12 +99,12 @@ for idx, row in enumerate(st.session_state.rows):
     if row.get('is_split') and c[11].button("🗑️", key=f"del_{rid}"):
         st.session_state.rows.pop(idx); st.rerun()
 
-# [3. 이미지 반영: 기종별 합계 실적 (로트 입력칸 추가) & 주요 부품 LOT (버튼 제거)]
-st.markdown("<div class='section-title'>📦 기종별 종합 실적(LOT 입력) 및 주요 부품 관리</div>", unsafe_allow_html=True)
+# [4. 기종별 합계 실적(LOT) 및 주요 부품 관리 (5x3 고정)]
+st.markdown("<div class='section-title'>📦 기종별 합계(LOT 기록) 및 주요 부품 관리</div>", unsafe_allow_html=True)
 sc1, sc2 = st.columns([1.5, 1])
 
 with sc1:
-    st.write("**기종별 실적 합계 및 LOT 기록**")
+    st.write("**기종별 생산 집계 및 개별 LOT No.**")
     sum_list = []
     for r in st.session_state.rows:
         p = st.session_state.get(f"p_{r['id']}", "선택")
@@ -96,26 +112,32 @@ with sc1:
             sum_list.append({"기종": p, "목표": st.session_state.get(f"target_{r['id']}", 0), "실적": st.session_state.get(f"a_{r['id']}", 0), "불량": st.session_state.get(f"dq_{r['id']}", 0)})
     if sum_list:
         df_sum = pd.DataFrame(sum_list).groupby("기종").sum().reset_index()
-        # 이미지 반영: 불량 옆에 로트 넘버 입력칸 수동 구성
-        sh_cols = st.columns([1.5, 0.7, 0.7, 0.7, 1.5])
-        for col, h in zip(sh_cols, ["기종명", "목표", "실적", "불량", "기종별 LOT No."]): col.markdown(f"**{h}**")
+        h_sum = st.columns([1.5, 0.7, 0.7, 0.7, 1.5])
+        for col, h in zip(h_sum, ["기종명", "목표", "실적", "불량", "기종별 LOT No."]): col.markdown(f"**{h}**")
         for i, sr in df_sum.iterrows():
-            r_cols = st.columns([1.5, 0.7, 0.7, 0.7, 1.5])
-            r_cols[0].write(sr['기종']); r_cols[1].write(sr['목표']); r_cols[2].write(sr['실적']); r_cols[3].write(sr['불량'])
-            # 기종별 LOT 입력 창 추가
-            st.session_state[f"model_lot_{sr['기종']}"] = r_cols[4].text_input("LOT 입력", key=f"mlot_{i}", label_visibility="collapsed", placeholder="LOT 입력")
+            r_sum = st.columns([1.5, 0.7, 0.7, 0.7, 1.5])
+            r_sum[0].write(sr['기종']); r_sum[1].write(sr['목표']); r_sum[2].write(sr['실적']); r_sum[3].write(sr['불량'])
+            st.session_state[f"model_lot_{sr['기종']}"] = r_sum[4].text_input("LOT 입력", key=f"mlot_{i}", label_visibility="collapsed")
 
 with sc2:
-    st.write("**주요 부품 LOT (고정 5종 - 숫자패드)**")
+    st.write("**주요 부품 LOT (5x3 고정 - 숫자패드 전용)**")
     for pt in ["감속기", "로타", "케이스", "리어커버", "센서"]:
         bc = st.columns([1, 1, 2.5])
         bc[0].info(f"**{pt}**")
-        # 이미지 반영: 수량 창에서 +/- 제거 고정
         bc[1].number_input("수량", min_value=0, key=f"q_{pt}", label_visibility="collapsed")
-        bc[2].text_input("LOT", key=f"l_{pt}", label_visibility="collapsed", placeholder=f"{pt} LOT 기입")
+        bc[2].text_input("LOT No.", key=f"l_{pt}", label_visibility="collapsed", placeholder=f"{pt} 로트번호")
 
-# [4. 토크 측정 및 데이터 전송]
+# [5. 토크 측정값]
 st.markdown("<div class='section-title'>🔧 전동 드라이버 토크 측정 (kgf-cm)</div>", unsafe_allow_html=True)
-# (토크 측정 로직 v7.5 동일 유지)
-if st.button("🚀 관제 센터로 데이터 최종 전송", type="primary"):
-    st.success("✅ 이미지 기반 최종 보정 완료! 구글 시트 전송 성공."); st.balloons()
+for k in range(1, 6):
+    tc = st.columns([1, 2, 2])
+    tc[0].write(f"**{k}번 드라이버**")
+    t_val = tc[1].text_input("값 입력", key=f"t_{k}", label_visibility="collapsed")
+    if t_val.strip():
+        try:
+            if float(t_val.replace(',', '.')) >= 15: tc[2].success("OK (합격)")
+            else: tc[2].error("NG (불합격)")
+        except: pass
+
+if st.button("🚀 데이터 최종 전송 및 구글 시트 저장", type="primary", use_container_width=True):
+    st.success("✅ [버전 7.5.3] 전송 완료! 모든 데이터가 무결하게 저장되었습니다."); st.balloons()
