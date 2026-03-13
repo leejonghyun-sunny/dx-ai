@@ -3,12 +3,12 @@ import pandas as pd
 from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
 
-# --- 1. 페이지 설정 및 UI 강제 고정 (다크테마 & 강력한 화살표 제거) ---
-st.set_page_config(page_title="스마트작업일보 조립1라인 (v7.5.5)", layout="wide")
+# --- 1. 페이지 설정 및 UI 고정 (다크테마 & 화살표 완전 제거 CSS) ---
+st.set_page_config(page_title="스마트작업일보 조립1라인 (v7.5.6)", layout="wide")
 
 st.markdown("""
 <style>
-    /* [긴급] 모든 숫자 입력칸의 +/- 화살표 및 증감 버튼 완전 박멸 */
+    /* 모든 숫자 입력칸의 +/- 화살표 및 증감 버튼 완전 제거 */
     input[type=number]::-webkit-inner-spin-button, 
     input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none !important; margin: 0 !important; }
     input[type=number] { -moz-appearance: textfield !important; }
@@ -19,7 +19,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. 표준 데이터베이스 및 지원 작업자 ---
+# --- 2. 표준 데이터베이스 ---
 PRODUCT_DB = {
     "VE (태양)": 65, "100바 (태양)": 65, "6*14 (태양)": 65, "황동 (태양)": 40, "80각 (태양)": 42, "방화 (태양)": 65,
     "MC (태성)": 45, "90W (태성)": 45, "60W B/K (태성)": 30, "90W B/K (태성)": 30,
@@ -27,6 +27,7 @@ PRODUCT_DB = {
     "윈스터 (중문)": 54, "펜타포스 (중문)": 54, "코르텍 (중문)": 54, "태광": 55, "펜타포스(단독)": 80, "씨넷": 88, "현대": 58, "H&T": 60
 }
 SUPPORT_WORKERS = ["없음", "강유진", "유진화", "하순영", "강은미", "권갑순"]
+MAIN_WORKERS = ["안희선", "강선혜"] # [수정] 메인 작업자 고정 리스트
 
 # --- 3. 세션 무결성 초기화 ---
 if 'rows' not in st.session_state:
@@ -35,12 +36,12 @@ if 'rows' not in st.session_state:
     st.session_state.next_id = len(slots)
     st.session_state.issue_state = None
 
-# [타이틀 강제 고정]
-st.title("스마트작업일보 조립1라인 (v7.5.5)")
+# [타이틀 고정]
+st.title("스마트작업일보 조립1라인 (v7.5.6)")
 
-# [1. 통합 작업표준 확인 (이사님 지시 문구)]
+# [1. 통합 작업표준 확인]
 st.markdown("<div class='section-title'>📋 작업 표준 및 품질 통합 확인</div>", unsafe_allow_html=True)
-c_all = st.checkbox("✅ 작업표준및 작업지침 4대항목 확인 완료", key="confirm_all_final")
+c_all = st.checkbox("✅ 작업표준및 작업지침 4대항목 확인 완료", key="confirm_v756")
 ck_cols = st.columns(4)
 items = ["작업표준서 확인", "Q-POINT/지침 확인", "지그청소 상태 확인", "작업 전 자주검사"]
 for col, item in zip(ck_cols, items):
@@ -53,14 +54,13 @@ ic = st.columns(5)
 for i, label in enumerate(["자재결품", "품질문제", "장비문제", "기타사항", "상황종료"]):
     if ic[i].button(label, key=f"btn_{label}"):
         st.session_state.issue_state = label if label != "상황종료" else None
-if st.session_state.issue_state:
-    st.error(f"📢 관리자 보고 중: [{st.session_state.issue_state}]")
 
-# [3. 생산 기록 본문 (이사님 8단계 수식 기종변경 탑재)]
-st.markdown("<div class='section-title'>📊 생산 기록 (CT 기반 시간 정밀 차감 모드)</div>", unsafe_allow_html=True)
+# [3. 생산 기록 본문]
+st.markdown("<div class='section-title'>📊 생산 관리 기록 (이사님 수식 반영)</div>", unsafe_allow_html=True)
 c_info = st.columns(2)
 work_date = c_info[0].date_input("🗓️ 작업일자", datetime.today())
-worker_name = c_info[1].text_input("👤 메인 작업자", value="안희선")
+# [수정] 메인 작업자 이름 고정 (selectbox)
+worker_name = c_info[1].selectbox("👤 메인 작업자 선택", MAIN_WORKERS, key="main_worker_v756")
 
 cols = st.columns([1.3, 0.6, 1.8, 0.6, 0.6, 1.0, 0.5, 0.8, 0.6, 1.0, 0.5, 0.5])
 h_names = ["시간대", "분", "기종", "목표", "실적", "불량명", "수량", "사유", "비가", "지원", "➕", "🗑️"]
@@ -83,25 +83,21 @@ for idx, row in enumerate(st.session_state.rows):
     dm = c[8].number_input("비가", min_value=0, key=f"dm_{rid}", label_visibility="collapsed")
     c[9].selectbox("지원", SUPPORT_WORKERS, key=f"s_{rid}", label_visibility="collapsed")
     
-    # [핵심] 기종변경 시 이전 시간 차감 및 신규 행 생성 로직 (이사님 수식 적용)
     if c[10].button("➕", key=f"add_{rid}"):
         used_m = round((act_qty * (3600 / uph)) / 60, 1) if uph > 0 else 0
         rem_m = row['m'] - used_m - dm 
         if rem_m > 0:
-            # 현재 행의 분을 사용된 분으로 수정
             st.session_state.rows[idx]['m'] = used_m
-            # 남은 분으로 새 행 추가
             st.session_state.rows.insert(idx + 1, {"id": st.session_state.next_id, "time": row['time'], "m": rem_m, "is_split": True})
             st.session_state.next_id += 1; st.rerun()
     if row.get('is_split') and c[11].button("🗑️", key=f"del_{rid}"):
         st.session_state.rows.pop(idx); st.rerun()
 
-# [4. 종합 실적 및 자재 LOT (기종별 LOT 입력 기능)]
+# [4. 종합 실적 및 부품 관리]
 st.markdown("<div class='section-title'>📦 종합 실적 및 주요 부품 관리 (5x3 고정)</div>", unsafe_allow_html=True)
 sc1, sc2 = st.columns([1.5, 1])
-
 with sc1:
-    st.write("**기종별 생산 합계 및 개별 LOT No.**")
+    st.write("**기종별 생산 합계 및 개별 LOT**")
     summary = []
     for r in st.session_state.rows:
         p = st.session_state.get(f"p_{r['id']}", "선택")
@@ -116,7 +112,7 @@ with sc1:
             st.session_state[f"model_lot_{sr['기종']}"] = r_sum[4].text_input("LOT", key=f"mlot_{i}", label_visibility="collapsed")
 
 with sc2:
-    st.write("**주요 부품 LOT (5x3 고정 - 숫자패드 전용)**")
+    st.write("**주요 부품 LOT (5x3 고정)**")
     bom_data = {}
     for pt in ["감속기", "로타", "케이스", "리어커버", "센서"]:
         bc = st.columns([1, 1, 2.5])
@@ -125,13 +121,12 @@ with sc2:
         p_l = bc[2].text_input("LOT", key=f"l_{pt}", label_visibility="collapsed", placeholder="로트번호")
         bom_data[pt] = f"{p_l}({p_q})"
 
-# [5. 토크 측정 및 구글 시트 연동 전송 로직]
+# [5. 데이터 전송 로직]
 st.markdown("<div class='section-title'>🔧 전동 드라이버 토크 측정 (kgf-cm)</div>", unsafe_allow_html=True)
 t_list = []
 for k in range(1, 6):
     tc = st.columns([1, 2, 2])
-    tc[0].write(f"**{k}번**")
-    t_v = tc[1].text_input("값", key=f"t_{k}", label_visibility="collapsed")
+    tc[0].write(f"**{k}번**"); t_v = tc[1].text_input("값", key=f"t_{k}", label_visibility="collapsed")
     t_list.append(t_v)
     if t_v.strip():
         try:
@@ -139,7 +134,7 @@ for k in range(1, 6):
             else: tc[2].error("NG")
         except: pass
 
-if st.button("🚀 데이터 최종 전송 및 구글 시트 연동", type="primary", use_container_width=True):
+if st.button("🚀 데이터 최종 전송 (v7.5.6)", type="primary", use_container_width=True):
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -161,6 +156,6 @@ if st.button("🚀 데이터 최종 전송 및 구글 시트 연동", type="prim
                 })
         df = conn.read(worksheet="sheet1")
         conn.update(worksheet="sheet1", data=pd.concat([df, pd.DataFrame(final_data)], ignore_index=True))
-        st.success("✅ [버전 7.5.5] 구글 시트 연동 성공!"); st.balloons()
+        st.success("✅ [버전 7.5.6] 데이터 전송 및 구글 시트 연동 성공!"); st.balloons()
     except Exception as e:
         st.error(f"❌ 전송 오류: {e}")
