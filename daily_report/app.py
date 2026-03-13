@@ -1,37 +1,25 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
 
-# --- 1. 페이지 설정 및 UI 강제 고정 (배경 원복 및 강력한 화살표 제거) ---
-st.set_page_config(page_title="스마트작업일보 조립1라인 (v7.5.4)", layout="wide")
+# --- 1. 페이지 설정 및 UI 강제 고정 (다크테마 & 강력한 화살표 제거) ---
+st.set_page_config(page_title="스마트작업일보 조립1라인 (v7.5.5)", layout="wide")
 
 st.markdown("""
 <style>
-    /* [긴급 조치] 모든 숫자 입력칸의 +/- 화살표 및 증감 버튼을 완전히 숨김 */
-    /* Webkit 브라우저(Chrome, Safari 등) 전용 */
+    /* [긴급] 모든 숫자 입력칸의 +/- 화살표 및 증감 버튼 완전 박멸 */
     input[type=number]::-webkit-inner-spin-button, 
-    input[type=number]::-webkit-outer-spin-button { 
-        -webkit-appearance: none !important; 
-        margin: 0 !important; 
-    }
-    /* Firefox 전용 */
-    input[type=number] { 
-        -moz-appearance: textfield !important; 
-    }
+    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none !important; margin: 0 !important; }
+    input[type=number] { -moz-appearance: textfield !important; }
     
-    /* 섹션 타이틀 스타일 */
     .section-title { font-size: 18px; font-weight: bold; color: #58a6ff; border-left: 5px solid #58a6ff; padding-left: 10px; margin-top:20px; margin-bottom:15px; }
-    
-    /* 체크 항목 가독성 UI */
-    .check-item-box { background-color: #161b22; padding: 10px; border-radius: 5px; border: 1px solid #30363d; text-align: center; font-size: 14px; color: #c9d1d9; }
-    
-    /* 버튼 스타일 */
     .stButton>button { border-radius: 5px; font-weight: bold; width: 100%; }
+    .check-item-box { background-color: #161b22; padding: 10px; border-radius: 5px; border: 1px solid #30363d; text-align: center; color: #c9d1d9; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. 표준 데이터베이스 ---
+# --- 2. 표준 데이터베이스 및 지원 작업자 ---
 PRODUCT_DB = {
     "VE (태양)": 65, "100바 (태양)": 65, "6*14 (태양)": 65, "황동 (태양)": 40, "80각 (태양)": 42, "방화 (태양)": 65,
     "MC (태성)": 45, "90W (태성)": 45, "60W B/K (태성)": 30, "90W B/K (태성)": 30,
@@ -47,14 +35,12 @@ if 'rows' not in st.session_state:
     st.session_state.next_id = len(slots)
     st.session_state.issue_state = None
 
-# [타이틀 강제 고정: 시스템 명칭 및 버전 이력]
-st.title("스마트작업일보 조립1라인 (v7.5.4)")
+# [타이틀 강제 고정]
+st.title("스마트작업일보 조립1라인 (v7.5.5)")
 
-# [1. 통합 작업표준 확인 (이사님 지시 문구 반영)]
+# [1. 통합 작업표준 확인 (이사님 지시 문구)]
 st.markdown("<div class='section-title'>📋 작업 표준 및 품질 통합 확인</div>", unsafe_allow_html=True)
-c_all = st.checkbox("✅ 작업표준및 작업지침 4대항목 확인 완료", key="confirm_v754")
-
-# 4대 항목 UI 고정 (원클릭 연동)
+c_all = st.checkbox("✅ 작업표준및 작업지침 4대항목 확인 완료", key="confirm_all_final")
 ck_cols = st.columns(4)
 items = ["작업표준서 확인", "Q-POINT/지침 확인", "지그청소 상태 확인", "작업 전 자주검사"]
 for col, item in zip(ck_cols, items):
@@ -62,16 +48,16 @@ for col, item in zip(ck_cols, items):
     col.markdown(f"<div class='check-item-box'><b>{item}</b><br>{status}</div>", unsafe_allow_html=True)
 
 # [2. 현장 비상 호출]
-st.markdown("<div class='section-title'>🚨 현장 비상 호출 (관리자 보고)</div>", unsafe_allow_html=True)
+st.markdown("<div class='section-title'>🚨 현장 비상 호출</div>", unsafe_allow_html=True)
 ic = st.columns(5)
 for i, label in enumerate(["자재결품", "품질문제", "장비문제", "기타사항", "상황종료"]):
     if ic[i].button(label, key=f"btn_{label}"):
         st.session_state.issue_state = label if label != "상황종료" else None
 if st.session_state.issue_state:
-    st.error(f"📢 상황 보고 중: [{st.session_state.issue_state}]")
+    st.error(f"📢 관리자 보고 중: [{st.session_state.issue_state}]")
 
-# [3. 생산 기록 본문]
-st.markdown("<div class='section-title'>📊 생산 관리 기록 (CT 기반 목표 자동 생성)</div>", unsafe_allow_html=True)
+# [3. 생산 기록 본문 (이사님 8단계 수식 기종변경 탑재)]
+st.markdown("<div class='section-title'>📊 생산 기록 (CT 기반 시간 정밀 차감 모드)</div>", unsafe_allow_html=True)
 c_info = st.columns(2)
 work_date = c_info[0].date_input("🗓️ 작업일자", datetime.today())
 worker_name = c_info[1].text_input("👤 메인 작업자", value="안희선")
@@ -86,7 +72,6 @@ for idx, row in enumerate(st.session_state.rows):
     act_qty = c[4].number_input("실적", min_value=0, key=f"a_{rid}", label_visibility="collapsed")
     uph = PRODUCT_DB.get(p_sel, 0)
 
-    # 목표 수량 즉시 생성 및 리셋 로직
     if p_sel == "선택": st.session_state[f"target_{rid}"] = 0
     else: st.session_state[f"target_{rid}"] = round((uph / 60) * row['m'])
 
@@ -94,34 +79,37 @@ for idx, row in enumerate(st.session_state.rows):
     c[3].write(f"**{st.session_state.get(f'target_{rid}', 0)}**")
     c[5].selectbox("불량", ["없음", "이음", "찍힘", "파형"], key=f"dt_{rid}", label_visibility="collapsed")
     c[6].number_input("EA", min_value=0, key=f"dq_{rid}", label_visibility="collapsed")
-    c[7].selectbox("사유", ["없음", "셋업", "부품", "품질"], key=f"dr_{rid}", label_visibility="collapsed")
+    dr = c[7].selectbox("사유", ["없음", "셋업", "부품", "품질"], key=f"dr_{rid}", label_visibility="collapsed")
     dm = c[8].number_input("비가", min_value=0, key=f"dm_{rid}", label_visibility="collapsed")
     c[9].selectbox("지원", SUPPORT_WORKERS, key=f"s_{rid}", label_visibility="collapsed")
     
+    # [핵심] 기종변경 시 이전 시간 차감 및 신규 행 생성 로직 (이사님 수식 적용)
     if c[10].button("➕", key=f"add_{rid}"):
         used_m = round((act_qty * (3600 / uph)) / 60, 1) if uph > 0 else 0
         rem_m = row['m'] - used_m - dm 
         if rem_m > 0:
+            # 현재 행의 분을 사용된 분으로 수정
+            st.session_state.rows[idx]['m'] = used_m
+            # 남은 분으로 새 행 추가
             st.session_state.rows.insert(idx + 1, {"id": st.session_state.next_id, "time": row['time'], "m": rem_m, "is_split": True})
             st.session_state.next_id += 1; st.rerun()
     if row.get('is_split') and c[11].button("🗑️", key=f"del_{rid}"):
         st.session_state.rows.pop(idx); st.rerun()
 
-# [4. 기종별 합계 및 주요 부품 관리 (5x3 고정 및 화살표 제거)]
-st.markdown("<div class='section-title'>📦 종합 실적(LOT) 및 주요 부품 투입 관리</div>", unsafe_allow_html=True)
+# [4. 종합 실적 및 자재 LOT (기종별 LOT 입력 기능)]
+st.markdown("<div class='section-title'>📦 종합 실적 및 주요 부품 관리 (5x3 고정)</div>", unsafe_allow_html=True)
 sc1, sc2 = st.columns([1.5, 1])
 
 with sc1:
-    st.write("**기종별 생산 합계 및 개별 LOT**")
+    st.write("**기종별 생산 합계 및 개별 LOT No.**")
     summary = []
     for r in st.session_state.rows:
         p = st.session_state.get(f"p_{r['id']}", "선택")
-        if p != "선택":
-            summary.append({"기종": p, "목표": st.session_state.get(f"target_{r['id']}", 0), "실적": st.session_state.get(f"a_{r['id']}", 0), "불량": st.session_state.get(f"dq_{r['id']}", 0)})
+        if p != "선택": summary.append({"기종": p, "목표": st.session_state.get(f"target_{r['id']}", 0), "실적": st.session_state.get(f"a_{r['id']}", 0), "불량": st.session_state.get(f"dq_{r['id']}", 0)})
     if summary:
         df_sum = pd.DataFrame(summary).groupby("기종").sum().reset_index()
         h_sum = st.columns([1.5, 0.7, 0.7, 0.7, 1.5])
-        for col, h in zip(h_sum, ["기종명", "목표", "실적", "불량", "기종별 LOT No."]): col.markdown(f"**{h}**")
+        for col, h in zip(h_sum, ["기종명", "목표", "실적", "불량", "기종별 LOT"]): col.markdown(f"**{h}**")
         for i, sr in df_sum.iterrows():
             r_sum = st.columns([1.5, 0.7, 0.7, 0.7, 1.5])
             r_sum[0].write(sr['기종']); r_sum[1].write(sr['목표']); r_sum[2].write(sr['실적']); r_sum[3].write(sr['불량'])
@@ -129,24 +117,50 @@ with sc1:
 
 with sc2:
     st.write("**주요 부품 LOT (5x3 고정 - 숫자패드 전용)**")
+    bom_data = {}
     for pt in ["감속기", "로타", "케이스", "리어커버", "센서"]:
         bc = st.columns([1, 1, 2.5])
         bc[0].info(f"**{pt}**")
-        # [핵심] 수량 입력칸에서 화살표를 완전히 제거함
-        bc[1].number_input("수량", min_value=0, key=f"q_{pt}", label_visibility="collapsed")
-        bc[2].text_input("LOT No.", key=f"l_{pt}", label_visibility="collapsed", placeholder=f"{pt} 로트번호")
+        p_q = bc[1].number_input("수량", min_value=0, key=f"q_{pt}", label_visibility="collapsed")
+        p_l = bc[2].text_input("LOT", key=f"l_{pt}", label_visibility="collapsed", placeholder="로트번호")
+        bom_data[pt] = f"{p_l}({p_q})"
 
-# [5. 토크 측정]
+# [5. 토크 측정 및 구글 시트 연동 전송 로직]
 st.markdown("<div class='section-title'>🔧 전동 드라이버 토크 측정 (kgf-cm)</div>", unsafe_allow_html=True)
+t_list = []
 for k in range(1, 6):
     tc = st.columns([1, 2, 2])
     tc[0].write(f"**{k}번**")
-    t_val = tc[1].text_input("측정값", key=f"t_{k}", label_visibility="collapsed")
-    if t_val.strip():
+    t_v = tc[1].text_input("값", key=f"t_{k}", label_visibility="collapsed")
+    t_list.append(t_v)
+    if t_v.strip():
         try:
-            if float(t_val.replace(',', '.')) >= 15: tc[2].success("OK")
+            if float(t_v.replace(',', '.')) >= 15: tc[2].success("OK")
             else: tc[2].error("NG")
-        except: tc[2].warning("숫자 입력")
+        except: pass
 
-if st.button("🚀 데이터 최종 전송 및 구글 시트 저장", type="primary", use_container_width=True):
-    st.success("✅ [버전 7.5.4] 데이터가 성공적으로 저장되었습니다."); st.balloons()
+if st.button("🚀 데이터 최종 전송 및 구글 시트 연동", type="primary", use_container_width=True):
+    try:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        bom_str = " / ".join([f"{k}:{v}" for k, v in bom_data.items()])
+        final_data = []
+        for r in st.session_state.rows:
+            p = st.session_state.get(f"p_{r['id']}", "선택")
+            if p != "선택":
+                final_data.append({
+                    "Timestamp": ts, "Work_Date": work_date.strftime("%Y-%m-%d"), "Worker_Name": worker_name,
+                    "Time_Slot": r['time'], "Invested_Min": r['m'], "Item_Name": p,
+                    "Target_UPH": st.session_state.get(f"target_{r['id']}", 0),
+                    "Actual_Qty": st.session_state.get(f"a_{r['id']}", 0), "Defect_Type": st.session_state.get(f"dt_{r['id']}", "없음"),
+                    "Defect_Qty": st.session_state.get(f"dq_{r['id']}", 0), "Reason": st.session_state.get(f"dr_{r['id']}", "없음"),
+                    "Downtime_Min": st.session_state.get(f"dm_{r['id']}", 0), "Torque_Value": " / ".join(t_list),
+                    "Material_Check": bom_str, "Issue_Status": "[CRITICAL]" if st.session_state.issue_state else "NORMAL",
+                    "Issue_Type": st.session_state.issue_state if st.session_state.issue_state else "None",
+                    "Model_Lot": st.session_state.get(f"model_lot_{p}", "")
+                })
+        df = conn.read(worksheet="sheet1")
+        conn.update(worksheet="sheet1", data=pd.concat([df, pd.DataFrame(final_data)], ignore_index=True))
+        st.success("✅ [버전 7.5.5] 구글 시트 연동 성공!"); st.balloons()
+    except Exception as e:
+        st.error(f"❌ 전송 오류: {e}")
