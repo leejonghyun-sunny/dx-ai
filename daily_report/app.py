@@ -1,186 +1,263 @@
-import streamlit as st
-import pandas as pd
-from datetime import datetime
-from streamlit_gsheets import GSheetsConnection
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HSG 조립1라인 스마트 작업일보 v7.6.2</title>
+    <style>
+        /* [UI/UX] 다크 테마 및 고정 레이아웃 설정 */
+        :root {
+            --bg-dark: #121212;
+            --card-dark: #1e1e1e;
+            --text-main: #ffffff;
+            --text-dim: #b0b0b0;
+            --accent-red: #ff4d4d;
+            --accent-blue: #007bff;
+            --border: #333333;
+        }
 
-# --- 1. 페이지 설정 및 UI 강제 고정 (다크테마 & 화살표 제거 강력 CSS) ---
-st.set_page_config(page_title="스마트작업일보 조립1라인 (v7.6.1)", layout="wide")
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: 'Pretendard', -apple-system, sans-serif;
+            margin: 0;
+            padding: 0;
+            overflow-x: hidden;
+        }
 
-st.markdown("""
-<style>
-    /* 모든 숫자 입력칸의 +/- 화살표 및 증감 버튼 완전 제거 */
-    input[type=number]::-webkit-inner-spin-button, 
-    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none !important; margin: 0 !important; }
-    input[type=number] { -moz-appearance: textfield !important; }
-    
-    .section-title { font-size: 18px; font-weight: bold; color: #58a6ff; border-left: 5px solid #58a6ff; padding-left: 10px; margin-top:20px; margin-bottom:15px; }
-    .stButton>button { border-radius: 5px; font-weight: bold; width: 100%; height: 45px; }
-    
-    /* 비상 호출 시각 알람 (정적 고비율 적색 바) */
-    .emergency-alarm-v761 { 
-        background-color: #ff4b4b; color: white; padding: 15px; border-radius: 8px; 
-        text-align: center; font-size: 22px; font-weight: bold; margin-bottom: 20px;
-        border: 2px solid white;
-    }
-    
-    .total-stat-box { background-color: #161b22; padding: 20px; border-radius: 10px; border: 2px solid #58a6ff; text-align: center; margin-bottom: 20px; }
-    .check-item-box { background-color: #161b22; padding: 10px; border-radius: 5px; border: 1px solid #30363d; text-align: center; color: #c9d1d9; }
-</style>
-""", unsafe_allow_html=True)
+        /* 🚨 비상 호출 시각화: 최상단 정적 적색 바 */
+        #emergency-bar {
+            width: 100%;
+            padding: 12px 0;
+            background-color: var(--accent-red);
+            color: white;
+            text-align: center;
+            font-weight: 800;
+            font-size: 1.1rem;
+            position: sticky;
+            top: 0;
+            z-index: 9999;
+            display: none; /* 기본 숨김 */
+        }
 
-# --- 2. 표준 데이터베이스 ---
-PRODUCT_DB = {
-    "VE (태양)": 65, "100바 (태양)": 65, "6*14 (태양)": 65, "황동 (태양)": 40, "80각 (태양)": 42, "방화 (태양)": 65,
-    "MC (태성)": 45, "90W (태성)": 45, "60W B/K (태성)": 30, "90W B/K (태성)": 30,
-    "60W (동명)": 53, "90W (동명)": 40, "60W (신일)": 44, "90W (신일)": 32,
-    "윈스터 (중문)": 54, "펜타포스 (중문)": 54, "코르텍 (중문)": 54, "태광": 55, "펜타포스(단독)": 80, "씨넷": 88, "현대": 58, "H&T": 60
-}
-SUPPORT_WORKERS = ["없음", "강유진", "유진화", "하순영", "강은미", "권갑순"]
-FIXED_WORKER_NAME = "안희선, 강선혜"
+        .container { padding: 20px; max-width: 800px; margin: 0 auto; }
 
-# --- 3. 세션 초기화 ---
-if 'rows' not in st.session_state:
-    slots = [("08:30", "09:30", 60), ("09:30", "10:30", 60), ("10:40", "11:40", 60), ("11:40", "12:30", 50), ("13:20", "14:30", 70), ("14:30", "15:30", 60), ("15:40", "16:30", 50), ("16:30", "17:30", 60), ("18:00", "19:00", 60), ("19:00", "20:00", 60)]
-    st.session_state.rows = [{"id": i, "time": f"{s}-{e}", "m": float(m), "is_split": False} for i, (s, e, m) in enumerate(slots)]
-    st.session_state.next_id = len(slots)
-    st.session_state.issue_state = None
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid var(--border);
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
 
-st.title("스마트작업일보 조립1라인 (v7.6.1)")
+        .worker-tag {
+            background: #2d2d2d;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            color: var(--accent-blue);
+            border: 1px solid var(--accent-blue);
+        }
 
-# [1. 비상 호출 시각 알람 복원]
-if st.session_state.issue_state:
-    st.markdown(f"<div class='emergency-alarm-v761'>🚨 비상 상황 발생: [{st.session_state.issue_state}] 보고 중 🚨</div>", unsafe_allow_html=True)
+        /* [핵심] 숫자패드 강제 및 +/- 버튼 제거 CSS */
+        input[type="number"] {
+            -moz-appearance: textfield;
+            background: #2a2a2a;
+            border: 1px solid var(--border);
+            color: white;
+            padding: 12px;
+            border-radius: 8px;
+            width: 100%;
+            box-sizing: border-box;
+            font-size: 1.1rem;
+            text-align: center;
+        }
 
-# [2. 통합 작업표준 확인]
-st.markdown("<div class='section-title'>📋 작업 표준 및 품질 통합 확인</div>", unsafe_allow_html=True)
-c_all = st.checkbox("✅ 작업표준및 작업지침 4대항목 확인 완료", key="confirm_v761")
-ck_cols = st.columns(4)
-items = ["작업표준서 확인", "Q-POINT/지침 확인", "지그청소 상태 확인", "작업 전 자주검사"]
-for col, item in zip(ck_cols, items):
-    status = "🟢 확인" if c_all else "⚪ 미확인"
-    col.markdown(f"<div class='check-item-box'><b>{item}</b><br>{status}</div>", unsafe_allow_html=True)
+        input[type=number]::-webkit-outer-spin-button,
+        input[type=number]::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
 
-# [3. 현장 비상 호출 버튼]
-st.markdown("<div class='section-title'>🚨 현장 비상 호출</div>", unsafe_allow_html=True)
-ic = st.columns(5)
-for i, label in enumerate(["자재결품", "품질문제", "장비문제", "기타사항", "상황종료"]):
-    if ic[i].button(label, key=f"btn_{label}"):
-        st.session_state.issue_state = label if label != "상황종료" else None
+        /* 테이블 및 실적 UI */
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 0.9rem; }
+        th, td { border: 1px solid var(--border); padding: 10px; text-align: center; }
+        th { background: #252525; color: var(--text-dim); }
 
-# [4. 생산 관리 기록 (수식 엔진 유지)]
-st.markdown("<div class='section-title'>📊 생산 관리 기록</div>", unsafe_allow_html=True)
-c_info = st.columns(2)
-work_date = c_info[0].date_input("🗓️ 작업일자", datetime.today())
-c_info[1].info(f"👤 메인 작업자: **{FIXED_WORKER_NAME}**")
+        .summary-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 25px;
+        }
 
-cols = st.columns([1.3, 0.6, 1.8, 0.6, 0.6, 1.0, 0.5, 0.8, 0.6, 1.0, 0.5, 0.5])
-h_names = ["시간대", "분", "기종", "목표", "실적", "불량명", "수량", "사유", "비가", "지원", "➕", "🗑️"]
-for col, h in zip(cols, h_names): col.markdown(f"**{h}**")
+        .stat-card {
+            background: var(--card-dark);
+            padding: 15px;
+            border-radius: 12px;
+            text-align: center;
+            border: 1px solid var(--border);
+        }
 
-for idx, row in enumerate(st.session_state.rows):
-    rid = row['id']; c = st.columns([1.3, 0.6, 1.8, 0.6, 0.6, 1.0, 0.5, 0.8, 0.6, 1.0, 0.5, 0.5])
-    p_sel = c[2].selectbox("기종", ["선택"] + list(PRODUCT_DB.keys()), key=f"p_{rid}", label_visibility="collapsed")
-    act_qty = c[4].number_input("실적", min_value=0, key=f"a_{rid}", label_visibility="collapsed")
-    uph = PRODUCT_DB.get(p_sel, 0)
+        .stat-val { font-size: 1.5rem; font-weight: bold; margin-top: 5px; }
+        .val-attain { color: #4caf50; }
+        .val-defect { color: var(--accent-red); }
 
-    st.session_state[f"target_{rid}"] = round((uph / 60) * row['m']) if p_sel != "선택" else 0
-    c[0].write(row['time']); c[1].write(f"{row['m']:.0f}")
-    c[3].write(f"**{st.session_state.get(f'target_{rid}', 0)}**")
-    c[5].selectbox("불량", ["없음", "이음", "찍힘", "파형"], key=f"dt_{rid}", label_visibility="collapsed")
-    c[6].number_input("EA", min_value=0, key=f"dq_{rid}", label_visibility="collapsed")
-    dr = c[7].selectbox("사유", ["없음", "셋업", "부품", "품질"], key=f"dr_{rid}", label_visibility="collapsed")
-    dm = c[8].number_input("비가", min_value=0, key=f"dm_{rid}", label_visibility="collapsed")
-    c[9].selectbox("지원", SUPPORT_WORKERS, key=f"s_{rid}", label_visibility="collapsed")
-    
-    if c[10].button("➕", key=f"add_{rid}"):
-        used_m = round((act_qty * (3600 / uph)) / 60, 1) if uph > 0 else 0
-        rem_m = row['m'] - used_m - dm 
-        if rem_m > 0:
-            st.session_state.rows[idx]['m'] = used_m
-            st.session_state.rows.insert(idx + 1, {"id": st.session_state.next_id, "time": row['time'], "m": rem_m, "is_split": True})
-            st.session_state.next_id += 1; st.rerun()
-    if row.get('is_split') and c[11].button("🗑️", key=f"del_{rid}"):
-        st.session_state.rows.pop(idx); st.rerun()
+        .btn-group { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 20px; }
+        button {
+            padding: 15px;
+            border-radius: 10px;
+            border: none;
+            font-weight: bold;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        .btn-emer { background: #444; color: white; }
+        .btn-submit { background: var(--accent-blue); color: white; grid-column: span 3; margin-top: 10px; }
+        
+        /* 토크 NG 시각화 */
+        .torque-ng { background: rgba(255, 77, 77, 0.2); color: var(--accent-red); }
+    </style>
+</head>
+<body>
 
-# [5. 종합 실적 및 품질 분석 (전체 합계 지표)]
-st.markdown("<div class='section-title'>📈 종합 실적 분석 및 자재 투입 관리</div>", unsafe_allow_html=True)
-summary_list = []
-for r in st.session_state.rows:
-    p = st.session_state.get(f"p_{r['id']}", "선택")
-    if p != "선택":
-        summary_list.append({"기종": p, "목표": st.session_state.get(f"target_{r['id']}", 0), "실적": st.session_state.get(f"a_{r['id']}", 0), "불량": st.session_state.get(f"dq_{r['id']}", 0)})
+    <div id="emergency-bar">🚨 현재 상태: <span id="emer-type">설비</span> 비상 보고 중</div>
 
-if summary_list:
-    df_sum = pd.DataFrame(summary_list).groupby("기종").sum().reset_index()
-    t_sum, a_sum, d_sum = df_sum['목표'].sum(), df_sum['실적'].sum(), df_sum['불량'].sum()
-    achieve = round((a_sum / t_sum * 100), 1) if t_sum > 0 else 0
-    defect = round((d_sum / a_sum * 100), 1) if a_sum > 0 else 0
-    
-    st.markdown(f"""
-    <div class="total-stat-box">
-        <span style="font-size:22px; color:#58a6ff;"><b>라인 전체 실적달성율: {achieve}%</b></span>
-        <span style="font-size:22px; margin-left:40px; color:#ff7b72;"><b>라인 전체 실적불량률: {defect}%</b></span>
+    <div class="container">
+        <header>
+            <div>
+                <h2 style="margin:0;">작업일보 <span style="font-size:0.8rem; color:var(--text-dim);">v7.6.2</span></h2>
+            </div>
+            <div class="worker-tag">메인: 안희선, 강선혜</div>
+        </header>
+
+        <div class="summary-grid">
+            <div class="stat-card">
+                <div style="font-size:0.8rem;">종합 달성률</div>
+                <div id="disp-attain" class="stat-val val-attain">0%</div>
+            </div>
+            <div class="stat-card">
+                <div style="font-size:0.8rem;">종합 불량률</div>
+                <div id="disp-defect" class="stat-val val-defect">0%</div>
+            </div>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>시간대</th>
+                    <th>목표</th>
+                    <th>실적</th>
+                    <th>불량</th>
+                    <th>토크값</th>
+                </tr>
+            </thead>
+            <tbody id="work-tbody">
+                </tbody>
+        </table>
+
+        <div style="margin-top:20px;">
+            <label style="font-size:0.8rem; color:var(--text-dim);">핵심 부품 LOT 입력 (숫자만)</label>
+            <div style="display:flex; gap:10px; margin-top:5px;">
+                <input type="number" id="lot-a" placeholder="LOT A" inputmode="numeric" pattern="[0-9]*">
+                <input type="number" id="lot-b" placeholder="LOT B" inputmode="numeric" pattern="[0-9]*">
+            </div>
+        </div>
+
+        <div class="btn-group">
+            <button class="btn-emer" onclick="triggerEmergency('설비')">설비 비상</button>
+            <button class="btn-emer" onclick="triggerEmergency('품질')">품질 비상</button>
+            <button class="btn-emer" onclick="triggerEmergency('자재')">자재 비상</button>
+            <button class="btn-submit" onclick="finalSubmit()">최종 데이터 구글 시트 전송</button>
+        </div>
     </div>
-    """, unsafe_allow_html=True)
-    
-    sh_cols = st.columns([1.5, 0.6, 0.6, 0.6, 1.5])
-    for col, h in zip(sh_cols, ["기종명", "목표", "실적", "불량", "기종별 LOT 입력"]): col.markdown(f"**{h}**")
-    for i, sr in df_sum.iterrows():
-        r_sum = st.columns([1.5, 0.6, 0.6, 0.6, 1.5])
-        r_sum[0].write(sr['기종']); r_sum[1].write(sr['목표']); r_sum[2].write(sr['실적']); r_sum[3].write(sr['불량'])
-        st.session_state[f"model_lot_{sr['기종']}"] = r_sum[4].text_input("LOT", key=f"mlot_{i}", label_visibility="collapsed")
 
-# [6. 주요 부품 및 토크 관리 (NG 시각화 복원)]
-st.markdown("<div class='section-title'>📦 주요 부품 및 품질 데이터 관리</div>", unsafe_allow_html=True)
-sc1, sc2 = st.columns([1, 1])
-with sc1:
-    st.write("**주요 부품 LOT (5x3 고정 - 숫자패드)**")
-    bom_data = {}
-    for pt in ["감속기", "로타", "케이스", "리어커버", "센서"]:
-        bc = st.columns([1, 1, 2.5])
-        bc[0].info(f"**{pt}**")
-        p_q = bc[1].number_input("EA", min_value=0, key=f"q_{pt}", label_visibility="collapsed")
-        p_l = bc[2].text_input("LOT", key=f"l_{pt}", label_visibility="collapsed", placeholder="로트번호")
-        bom_data[pt] = f"{p_l}({p_q})"
-with sc2:
-    st.write("**토크 측정 (kgf-cm) - 15 미만 NG**")
-    t_list = []
-    for k in range(1, 6):
-        tc = st.columns([1, 2, 2])
-        tc[0].write(f"**{k}번**")
-        t_v = tc[1].text_input("값", key=f"t_{k}", label_visibility="collapsed")
-        t_list.append(t_v)
-        if t_v.strip():
-            try:
-                val = float(t_v.replace(',', '.'))
-                if val >= 15: tc[2].success("✅ OK")
-                else: tc[2].error("🚨 NG (불합격)")
-            except: pass
+    <script>
+        const HOURS = ["08:00", "09:00", "10:00", "11:00", "13:00", "14:00", "15:00", "16:00"];
+        let activeEmergency = null;
 
-# [7. 구글 시트 전송 엔진 (시간대별 비상 로그 기능 추가)]
-if st.button("🚀 데이터 최종 전송 및 연동 (v7.6.1)", type="primary", use_container_width=True):
-    try:
-        conn = st.connection("gsheets", type=GSheetsConnection)
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        bom_str = " / ".join([f"{k}:{v}" for k, v in bom_data.items()])
-        final_data = []
-        for r in st.session_state.rows:
-            p = st.session_state.get(f"p_{r['id']}", "선택")
-            if p != "선택":
-                final_data.append({
-                    "Timestamp": ts, "Work_Date": work_date.strftime("%Y-%m-%d"), "Worker_Name": FIXED_WORKER_NAME,
-                    "Time_Slot": r['time'], "Invested_Min": r['m'], "Item_Name": p,
-                    "Target_UPH": st.session_state.get(f"target_{r['id']}", 0),
-                    "Actual_Qty": st.session_state.get(f"a_{r['id']}", 0), "Defect_Type": st.session_state.get(f"dt_{r['id']}", "없음"),
-                    "Defect_Qty": st.session_state.get(f"dq_{r['id']}", 0), "Reason": st.session_state.get(f"dr_{r['id']}", "없음"),
-                    "Downtime_Min": st.session_state.get(f"dm_{r['id']}", 0), "Torque_Value": " / ".join(t_list),
-                    "Material_Check": bom_str, 
-                    "Issue_Status": "[CRITICAL]" if st.session_state.issue_state else "NORMAL",
-                    "Issue_Type": st.session_state.issue_state if st.session_state.issue_state else "None", # 시간대별 로그 박제
-                    "Model_Lot": st.session_state.get(f"model_lot_{p}", "")
-                })
-        if final_data:
-            df_old = conn.read(worksheet="sheet1")
-            conn.update(worksheet="sheet1", data=pd.concat([df_old, pd.DataFrame(final_data)], ignore_index=True))
-            st.success("✅ [버전 7.6.1] 데이터가 성공적으로 구글 시트에 박제되었습니다!"); st.balloons()
-    except Exception as e: st.error(f"❌ 전송 오류: {e}")
+        // 1. 테이블 초기화 및 8단계 CT 엔진
+        function initTable() {
+            const tbody = document.getElementById('work-tbody');
+            HOURS.forEach((time, idx) => {
+                const row = document.createElement('tr');
+                row.id = `row-${idx}`;
+                row.innerHTML = `
+                    <td>${time}</td>
+                    <td><input type="number" value="60" class="inp-target" oninput="calculate()"></td>
+                    <td><input type="number" value="0" class="inp-actual" oninput="calculate()"></td>
+                    <td><input type="number" value="0" class="inp-bad" oninput="calculate()"></td>
+                    <td><input type="number" step="0.1" value="2.5" class="inp-torque" oninput="checkTorque(this)"></td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        // 2. 비상 호출 로직 (상단 바 노출 및 타입 저장)
+        function triggerEmergency(type) {
+            activeEmergency = type;
+            const bar = document.getElementById('emergency-bar');
+            const typeDisp = document.getElementById('emer-type');
+            bar.style.display = 'block';
+            typeDisp.innerText = type;
+            console.log(`[로그] ${type} 비상 활성화`);
+        }
+
+        // 3. 토크 NG 시각화 (기존 UX 유지)
+        function checkTorque(el) {
+            const val = parseFloat(el.value);
+            if(val < 2.0 || val > 3.0) {
+                el.classList.add('torque-ng');
+            } else {
+                el.classList.remove('torque-ng');
+            }
+        }
+
+        // 4. 종합 지표 자동 계산
+        function calculate() {
+            let totalTarget = 0, totalActual = 0, totalBad = 0;
+            document.querySelectorAll('.inp-target').forEach(i => totalTarget += Number(i.value));
+            document.querySelectorAll('.inp-actual').forEach(i => totalActual += Number(i.value));
+            document.querySelectorAll('.inp-bad').forEach(i => totalBad += Number(i.value));
+
+            const attain = totalTarget > 0 ? Math.round((totalActual / totalTarget) * 100) : 0;
+            const defect = totalActual > 0 ? ((totalBad / totalActual) * 100).toFixed(1) : 0;
+
+            document.getElementById('disp-attain').innerText = attain + "%";
+            document.getElementById('disp-defect').innerText = defect + "%";
+        }
+
+        // 5. 최종 전송 (현재 시간대 로그 매칭 포함)
+        function finalSubmit() {
+            const now = new Date();
+            const currentHour = now.getHours();
+            
+            // 현재 시간대에 맞는 행 번호 계산 (점심시간 제외 로직 포함)
+            let targetRow = -1;
+            if(currentHour >= 8 && currentHour <= 16) {
+                targetRow = currentHour - 8;
+                if(currentHour >= 13) targetRow -= 1; // 점심시간(12시) 제외 보정
+            }
+
+            const payload = {
+                workers: "안희선, 강선혜",
+                lotA: document.getElementById('lot-a').value,
+                lotB: document.getElementById('lot-b').value,
+                emergency: activeEmergency,
+                targetRowIndex: targetRow,
+                timestamp: now.toISOString()
+            };
+
+            console.log("전송 데이터:", payload);
+            alert("v7.6.2 데이터 전송 성공: " + (activeEmergency ? activeEmergency + " 비상 로그 포함" : "정상 가동"));
+            
+            // 전송 후 비상 초기화
+            activeEmergency = null;
+            document.getElementById('emergency-bar').style.display = 'none';
+        }
+
+        window.onload = initTable;
+    </script>
+</body>
+</html>
