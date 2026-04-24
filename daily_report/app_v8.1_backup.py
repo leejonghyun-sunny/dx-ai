@@ -2,24 +2,28 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, date
 import json
-import time
 from streamlit_gsheets import GSheetsConnection
 
 # ══════════════════════════════════════════════════════════════
-# HSG 스마트작업일보 v8.2.1
-# 변경사항 (v8.2 → v8.2.1)
-#   [G] 시간 분할(➕) 시 원본 행의 투입 시간 차감 로직 추가 (중복 시간 산정 방지)
-# 변경사항 (v8.1 → v8.2)
-#   [A] 자동저장 제거 → 수동저장 전용 (사용자 입력 방식)
-#   [B] 시트 스키마 자동 검증 (빈 시트 오류 원천 차단)
-#   [C] 전송 실패 복구 큐 + 재시도 UI
-#   [D] 복원 UX 개선 (st.dialog: 이어하기 / 새로시작 / 미리보기)
-#   [E] safe_update 429 대응 지수백오프 재시도 (3회)
-#   [F] conn.clear() 대체 — 빈 DataFrame 업데이트 사용 X
+# HSG 스마트작업일보 v8.1
+# 기존 streamlit-gsheets 연동 방식 유지
+#
+# [Fix1] 구글 시트 전송 오류 3가지 원인 수정
+#   - ttl=0 으로 캐시 무효화 (stale 데이터 방지)
+#   - 빈 시트 안전 처리 (컬럼 불일치 오류 제거)
+#   - 전송 실패 상세 오류 메시지 출력
+#
+# [Fix2] 데이터 휘발 방지
+#   - 구글 시트 "임시저장" 시트를 자동저장소로 활용
+#   - 세션 재시작 시 자동 복원
+#
+# [Fix3] 토크 기준 통일 → 15 kgf·cm 미만 NG
+# [Fix4] ➕ 무한분할 방지
+# [Fix5] 중복 전송 방지
 # ══════════════════════════════════════════════════════════════
 
 st.set_page_config(
-    page_title="HSG 스마트작업일보 v8.2.1",
+    page_title="HSG 스마트작업일보 v8.1",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -62,7 +66,6 @@ st.markdown("""
     }
     .save-badge-ok   { background:#0d2e12; color:#3fb950; padding:5px 12px; border-radius:4px; font-size:12px; display:inline-block; }
     .save-badge-fail { background:#2d1012; color:#f85149; padding:5px 12px; border-radius:4px; font-size:12px; display:inline-block; }
-    .queue-badge     { background:#3a1d0c; color:#ffae42; padding:6px 14px; border-radius:4px; font-size:13px; display:inline-block; font-weight:600; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -83,7 +86,7 @@ DEFECT_TYPES   = ["없음","이음","찍힘","파형","크랙","치수불량","�
 DEFECT_REASONS = ["없음","셋업","부품","품질","설비","작업자"]
 SUPPORT_WORKERS= ["없음","강유진","유진화","하순영","강은미","권갑순"]
 BOM_PARTS      = ["감속기","로타","케이스","리어커버","센서"]
-TORQUE_LIMIT   = 15.0
+TORQUE_LIMIT   = 15.0   # kgf·cm 미만 → NG (전체 통일 기준)
 FIXED_WORKER   = "안희선, 강선혜"
 
 SLOTS = [
@@ -94,196 +97,139 @@ SLOTS = [
     ("18:00","19:00",60), ("19:00","20:00",60),
 ]
 
-MAIN_SHEET      = "sheet1"
-BOM_SHEET       = "sheet1_BOM"
-AUTOSAVE_SHEET  = "임시저장"
+MAIN_SHEET    = "sheet1"       # 최종 전송 시트 (기존 유지)
+BOM_SHEET     = "sheet1_BOM"   # BOM/토크 전송 시트
+AUTOSAVE_SHEET= "임시저장"      # 자동저장 전용 시트
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1wQQiJ2j2Bl7tOkdt9-_IKXsNDtdvUqlXqtgcrWWj6Rs/edit?usp=sharing"
 
-RETRY_WAITS = [0, 1, 2]  # 즉시 → 1초 → 2초 (지수백오프)
-
 # ══════════════════════════════════════════════════════════════
-# [B] 시트 스키마 정의
-# ══════════════════════════════════════════════════════════════
-MAIN_SCHEMA = [
-    "Timestamp", "Work_Date", "Worker_Name", "Time_Slot", "Invested_Min",
-    "Item_Name", "Target_Qty", "Actual_Qty", "Defect_Type", "Defect_Qty",
-    "Defect_Reason", "Downtime_Min", "Support_Worker", "Model_LOT",
-    "Issue_Status", "Attainment_Pct", "Defect_Pct",
-]
-BOM_SCHEMA = (
-    ["Timestamp", "Work_Date", "Worker_Name"]
-    + [f"BOM_{pt}_qty" for pt in BOM_PARTS]
-    + [f"BOM_{pt}_lot" for pt in BOM_PARTS]
-    + [col for k in range(1, 6) for col in (f"Torque_{k}", f"Torque_{k}_판정")]
-)
-AUTOSAVE_SCHEMA = [
-    "saved_at", "work_date", "issue_state", "confirmed",
-    "rows_json", "bom_json", "torques_json", "pending_queue_json",
-]
-SCHEMAS = {
-    MAIN_SHEET:     MAIN_SCHEMA,
-    BOM_SHEET:      BOM_SCHEMA,
-    AUTOSAVE_SHEET: AUTOSAVE_SCHEMA,
-}
-
-# ══════════════════════════════════════════════════════════════
-# 스토리지 레이어
+# [Fix1] 안전한 시트 읽기/쓰기 유틸 (streamlit-gsheets 방식 유지)
 # ══════════════════════════════════════════════════════════════
 def safe_read(conn, worksheet: str) -> pd.DataFrame:
+    """
+    핵심 수정:
+    - ttl=0 → 캐시 없이 항상 최신 시트 데이터 읽기
+    - 빈 시트 반환 시 빈 DataFrame 안전하게 처리
+    """
     try:
         df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=worksheet, ttl=0)
+        # 전부 NaN인 컬럼 제거 (빈 시트 부산물)
         df = df.dropna(how="all", axis=1).dropna(how="all", axis=0)
         return df
-    except Exception:
+    except Exception as e:
+        # 시트가 아예 없을 때도 빈 DataFrame 반환 (오류 전파 안 함)
         return pd.DataFrame()
 
-
-def safe_update(conn, worksheet: str, data: pd.DataFrame):
-    """[E] 429/일시오류 지수백오프 재시도 — (ok, err_msg) 반환"""
-    last_err = ""
-    for wait_s in RETRY_WAITS:
-        if wait_s:
-            time.sleep(wait_s)
-        try:
-            conn.update(spreadsheet=SPREADSHEET_URL, worksheet=worksheet, data=data)
-            return True, ""
-        except Exception as e:
-            last_err = f"{type(e).__name__}: {e}"
-    return False, last_err
-
-
-def append_rows(conn, worksheet: str, new_rows):
-    """기존 + 신규 concat 후 safe_update"""
+def safe_update(conn, worksheet: str, new_rows: list[dict]) -> tuple[bool, str]:
+    """
+    핵심 수정:
+    - 기존 데이터 읽기(ttl=0) → 새 행 concat → 전체 update
+    - df_old가 비어있으면 new_rows만 사용 (컬럼 불일치 방지)
+    - 상세 오류 메시지 반환
+    """
     try:
         df_old = safe_read(conn, worksheet)
         df_new = pd.DataFrame(new_rows)
 
-        cols = SCHEMAS.get(worksheet, list(df_new.columns))
-        df_new = df_new.reindex(columns=cols, fill_value="")
-
         if df_old.empty or len(df_old.columns) == 0:
+            # 빈 시트: 새 데이터만 저장
             combined = df_new
         else:
-            df_old = df_old.reindex(columns=cols, fill_value="")
+            # 컬럼 정렬 후 concat (누락 컬럼은 NaN 대신 "" 처리)
+            all_cols = list(dict.fromkeys(
+                list(df_old.columns) + list(df_new.columns)
+            ))
+            df_old = df_old.reindex(columns=all_cols, fill_value="")
+            df_new = df_new.reindex(columns=all_cols, fill_value="")
             combined = pd.concat([df_old, df_new], ignore_index=True)
 
-        return safe_update(conn, worksheet, combined)
+        conn.update(spreadsheet=SPREADSHEET_URL, worksheet=worksheet, data=combined)
+        return True, "성공"
+
     except Exception as e:
+        # 상세 오류 타입과 메시지 반환
         return False, f"{type(e).__name__}: {e}"
 
 
-def clear_sheet(conn, worksheet: str):
-    """[F] 시트 비우기 — 헤더만 남긴 빈 DataFrame 업데이트"""
-    cols = SCHEMAS.get(worksheet, [])
+def autosave_state(conn) -> tuple[bool, str]:
+    """
+    [Fix2] 현재 세션 상태를 구글 시트 '임시저장' 시트에 1행으로 저장
+    비상호출, 행분할, 수동저장 버튼 클릭 시 호출
+    """
     try:
-        conn.update(
-            spreadsheet=SPREADSHEET_URL,
-            worksheet=worksheet,
-            data=pd.DataFrame(columns=cols),
-        )
-        return True
-    except Exception:
-        return False
+        rows_snapshot = []
+        for row in st.session_state.rows:
+            rid = row['id']
+            rows_snapshot.append({
+                "id":         rid,
+                "time":       row['time'],
+                "m":          row['m'],
+                "start_h":    row['start_h'],
+                "is_split":   row['is_split'],
+                "product":    st.session_state.get(f"p_{rid}",  "선택"),
+                "actual":     st.session_state.get(f"a_{rid}",  0),
+                "def_type":   st.session_state.get(f"dt_{rid}", "없음"),
+                "def_qty":    st.session_state.get(f"dq_{rid}", 0),
+                "def_reason": st.session_state.get(f"dr_{rid}", "없음"),
+                "down_min":   st.session_state.get(f"dm_{rid}", 0),
+                "support":    st.session_state.get(f"s_{rid}",  "없음"),
+            })
 
+        bom_snapshot = {
+            pt: {"qty": st.session_state.get(f"q_{pt}", 0),
+                 "lot": st.session_state.get(f"l_{pt}", "")}
+            for pt in BOM_PARTS
+        }
+        torque_snapshot = {
+            str(k): st.session_state.get(f"t_{k}", "")
+            for k in range(1, 6)
+        }
 
-def ensure_schema(conn):
-    """[B] 앱 시작 시 각 시트의 헤더를 검증/생성 (기존 데이터 보존)"""
-    for sheet_name, cols in SCHEMAS.items():
-        df = safe_read(conn, sheet_name)
-        # 시트가 완전히 비어있을 때만 헤더 삽입 (데이터 유실 방지)
-        if df.empty or len(df.columns) == 0:
-            try:
-                conn.update(
-                    spreadsheet=SPREADSHEET_URL,
-                    worksheet=sheet_name,
-                    data=pd.DataFrame(columns=cols),
-                )
-            except Exception:
-                pass
+        snapshot = pd.DataFrame([{
+            "saved_at":     datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "work_date":    str(st.session_state.get("work_date", date.today())),
+            "issue_state":  str(st.session_state.get("issue_state", "")),
+            "confirmed":    str(st.session_state.get("confirmed",   False)),
+            "rows_json":    json.dumps(rows_snapshot,  ensure_ascii=False),
+            "bom_json":     json.dumps(bom_snapshot,   ensure_ascii=False),
+            "torques_json": json.dumps(torque_snapshot, ensure_ascii=False),
+        }])
 
-
-# ══════════════════════════════════════════════════════════════
-# 스냅샷 / 복원
-# ══════════════════════════════════════════════════════════════
-def snapshot_state() -> dict:
-    rows_snapshot = []
-    for row in st.session_state.rows:
-        rid = row['id']
-        rows_snapshot.append({
-            "id":         rid,
-            "time":       row['time'],
-            "m":          row['m'],
-            "start_h":    row['start_h'],
-            "is_split":   row['is_split'],
-            "product":    st.session_state.get(f"p_{rid}",  "선택"),
-            "actual":     st.session_state.get(f"a_{rid}",  0),
-            "def_type":   st.session_state.get(f"dt_{rid}", "없음"),
-            "def_qty":    st.session_state.get(f"dq_{rid}", 0),
-            "def_reason": st.session_state.get(f"dr_{rid}", "없음"),
-            "down_min":   st.session_state.get(f"dm_{rid}", 0),
-            "support":    st.session_state.get(f"s_{rid}",  "없음"),
-        })
-    bom_snapshot = {
-        pt: {"qty": st.session_state.get(f"q_{pt}", 0),
-             "lot": st.session_state.get(f"l_{pt}", "")}
-        for pt in BOM_PARTS
-    }
-    torque_snapshot = {
-        str(k): st.session_state.get(f"t_{k}", "")
-        for k in range(1, 6)
-    }
-    return {
-        "saved_at":           datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "work_date":          str(st.session_state.get("work_date", date.today())),
-        "issue_state":        str(st.session_state.get("issue_state", "") or ""),
-        "confirmed":          str(st.session_state.get("confirmed", False)),
-        "rows_json":          json.dumps(rows_snapshot,   ensure_ascii=False),
-        "bom_json":           json.dumps(bom_snapshot,    ensure_ascii=False),
-        "torques_json":       json.dumps(torque_snapshot, ensure_ascii=False),
-        "pending_queue_json": json.dumps(
-            st.session_state.get("pending_queue", []), ensure_ascii=False
-        ),
-    }
-
-
-def save_to_cloud(conn):
-    """수동저장 버튼 전용 — 임시저장 시트에 1행 덮어쓰기"""
-    try:
-        snap = snapshot_state()
-        df = pd.DataFrame([snap]).reindex(columns=AUTOSAVE_SCHEMA, fill_value="")
-        return safe_update(conn, AUTOSAVE_SHEET, df)
+        # 임시저장 시트는 항상 1행 덮어쓰기 (누적 불필요)
+        conn.update(spreadsheet=SPREADSHEET_URL, worksheet=AUTOSAVE_SHEET, data=snapshot)
+        return True, ""
     except Exception as e:
-        return False, f"{type(e).__name__}: {e}"
+        return False, str(e)
 
 
-def peek_autosave(conn):
-    """[D] 복원 대상 데이터 존재 여부만 확인 — session_state 수정 X"""
-    df = safe_read(conn, AUTOSAVE_SHEET)
-    if df.empty:
-        return None
-    row = df.iloc[-1].to_dict()
-    if not str(row.get("saved_at", "")).strip():
-        return None
-    return row
-
-
-def apply_restore(row: dict):
-    """[D] '이어하기' 선택 시 session_state에 적용"""
+def restore_from_autosave(conn) -> bool:
+    """
+    [Fix2] 세션 재시작 시 '임시저장' 시트에서 복원
+    """
     try:
-        st.session_state["work_date"] = date.fromisoformat(str(row.get("work_date", "")))
-    except Exception:
-        pass
+        df = safe_read(conn, AUTOSAVE_SHEET)
+        if df.empty:
+            return False
 
-    issue = str(row.get("issue_state", ""))
-    st.session_state.issue_state = issue if issue not in ("", "None", "nan") else None
+        row = df.iloc[-1]
 
-    rows_json = str(row.get("rows_json", "") or "")
-    if rows_json and rows_json != "nan":
+        # 날짜 복원
         try:
+            st.session_state["work_date"] = date.fromisoformat(str(row.get("work_date", "")))
+        except Exception:
+            pass
+
+        # 비상 상태 복원
+        issue = str(row.get("issue_state", ""))
+        st.session_state.issue_state = issue if issue not in ("", "None") else None
+
+        # 행 데이터 복원
+        rows_json = row.get("rows_json", "")
+        if rows_json:
             saved_rows = json.loads(rows_json)
             st.session_state.rows = [
                 {k: v for k, v in r.items()
-                 if k in ["id", "time", "m", "start_h", "is_split"]}
+                 if k in ["id","time","m","start_h","is_split"]}
                 for r in saved_rows
             ]
             st.session_state.next_id = max(r["id"] for r in saved_rows) + 1
@@ -294,50 +240,41 @@ def apply_restore(row: dict):
                 st.session_state[f"dt_{rid}"] = r.get("def_type",   "없음")
                 st.session_state[f"dq_{rid}"] = int(r.get("def_qty", 0))
                 st.session_state[f"dr_{rid}"] = r.get("def_reason", "없음")
-                st.session_state[f"dm_{rid}"] = int(r.get("down_min", 0))
+                st.session_state[f"dm_{rid}"] = int(r.get("down_min",0))
                 st.session_state[f"s_{rid}"]  = r.get("support",    "없음")
-        except Exception:
-            pass
 
-    bom_json = str(row.get("bom_json", "") or "")
-    if bom_json and bom_json != "nan":
-        try:
+        # BOM 복원
+        bom_json = row.get("bom_json", "")
+        if bom_json:
             bom = json.loads(bom_json)
             for pt, v in bom.items():
                 st.session_state[f"q_{pt}"] = int(v.get("qty", 0))
                 st.session_state[f"l_{pt}"] = str(v.get("lot", ""))
-        except Exception:
-            pass
 
-    torques_json = str(row.get("torques_json", "") or "")
-    if torques_json and torques_json != "nan":
-        try:
+        # 토크 복원
+        torques_json = row.get("torques_json", "")
+        if torques_json:
             torques = json.loads(torques_json)
             for k, v in torques.items():
                 st.session_state[f"t_{k}"] = str(v)
-        except Exception:
-            pass
 
-    pq_json = str(row.get("pending_queue_json", "") or "")
-    if pq_json and pq_json != "nan":
-        try:
-            st.session_state.pending_queue = json.loads(pq_json)
-        except Exception:
-            st.session_state.pending_queue = []
+        st.session_state.autosave_msg  = f"✓ 데이터 복원 완료 ({row.get('saved_at','')})"
+        st.session_state.autosave_ok   = True
+        return True
 
+    except Exception as e:
+        st.session_state.autosave_msg = f"⚠ 복원 실패: {e}"
+        st.session_state.autosave_ok  = False
+        return False
 
 # ══════════════════════════════════════════════════════════════
-# 연결 + 최초 스키마 검증
+# 구글 시트 연결 (기존 방식 유지)
+# secrets.toml의 [connections.gsheets] 설정 그대로 사용
 # ══════════════════════════════════════════════════════════════
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-if "schema_checked" not in st.session_state:
-    with st.spinner("시트 스키마 검증 중..."):
-        ensure_schema(conn)
-    st.session_state.schema_checked = True
-
 # ══════════════════════════════════════════════════════════════
-# 세션 기본값
+# 세션 초기화
 # ══════════════════════════════════════════════════════════════
 if 'rows' not in st.session_state:
     st.session_state.rows = [
@@ -345,53 +282,17 @@ if 'rows' not in st.session_state:
          "start_h":int(s.split(':')[0]), "is_split":False}
         for i,(s,e,m) in enumerate(SLOTS)
     ]
-    st.session_state.next_id      = len(SLOTS)
-    st.session_state.issue_state  = None
-    st.session_state.submitted    = False
-    st.session_state.confirmed    = False
-    st.session_state.save_msg     = ""
-    st.session_state.save_ok      = True
-    st.session_state.pending_queue = []
+    st.session_state.next_id     = len(SLOTS)
+    st.session_state.issue_state = None
+    st.session_state.submitted   = False
+    st.session_state.confirmed   = False
+    st.session_state.autosave_msg= ""
+    st.session_state.autosave_ok = True
 
-# ══════════════════════════════════════════════════════════════
-# [D] 부팅 상태머신: 복원 대상 검사 → 다이얼로그
-# ══════════════════════════════════════════════════════════════
-if "boot_stage" not in st.session_state:
-    with st.spinner("이전 작업 확인 중..."):
-        snap = peek_autosave(conn)
-    if snap:
-        st.session_state.boot_stage    = "RESTORE_PROMPT"
-        st.session_state.boot_snapshot = snap
-    else:
-        st.session_state.boot_stage = "READY"
-
-if st.session_state.boot_stage == "RESTORE_PROMPT":
-    snap = st.session_state.boot_snapshot
-
-    @st.dialog("이전 작업 복원")
-    def restore_dialog():
-        st.warning(
-            f"이전에 저장된 작업이 있습니다.\n\n"
-            f"**저장 시각:** {snap.get('saved_at','')}\n\n"
-            f"**작업일자:** {snap.get('work_date','')}\n\n"
-            f"**비상상태:** {snap.get('issue_state','') or '없음'}"
-        )
-        c1, c2, c3 = st.columns(3)
-        if c1.button("▶ 이어하기", type="primary", use_container_width=True):
-            apply_restore(snap)
-            st.session_state.boot_stage = "READY"
-            st.session_state.save_msg = f"✓ 이전 작업 이어서 시작 ({snap.get('saved_at','')})"
-            st.session_state.save_ok  = True
-            st.rerun()
-        if c2.button("🆕 새로 시작", use_container_width=True):
-            clear_sheet(conn, AUTOSAVE_SHEET)
-            st.session_state.boot_stage = "READY"
-            st.rerun()
-        if c3.button("👁 미리보기", use_container_width=True):
-            st.json({k: v for k, v in snap.items() if k != "pending_queue_json"})
-
-    restore_dialog()
-    st.stop()
+# [Fix2] 앱 시작 시 1회만 복원 시도
+if "restore_attempted" not in st.session_state:
+    st.session_state.restore_attempted = True
+    restore_from_autosave(conn)
 
 # ══════════════════════════════════════════════════════════════
 # UI 렌더링
@@ -406,24 +307,15 @@ if st.session_state.issue_state:
         unsafe_allow_html=True
     )
 
-st.title("스마트작업일보 조립1라인 (v8.2.1)")
+st.title("스마트작업일보 조립1라인 (v8.1)")
 
-# 저장 상태 / 큐 배지
-badge_cols = st.columns([3, 2])
-with badge_cols[0]:
-    if st.session_state.save_msg:
-        css = "save-badge-ok" if st.session_state.save_ok else "save-badge-fail"
-        st.markdown(
-            f"<span class='{css}'>{st.session_state.save_msg}</span>",
-            unsafe_allow_html=True
-        )
-with badge_cols[1]:
-    pq_len = len(st.session_state.pending_queue)
-    if pq_len > 0:
-        st.markdown(
-            f"<span class='queue-badge'>📦 미전송 {pq_len}건 — 아래 재시도 버튼 확인</span>",
-            unsafe_allow_html=True
-        )
+# 자동저장 상태 배지
+if st.session_state.autosave_msg:
+    css = "save-badge-ok" if st.session_state.autosave_ok else "save-badge-fail"
+    st.markdown(
+        f"<span class='{css}'>{st.session_state.autosave_msg}</span>",
+        unsafe_allow_html=True
+    )
 
 # ── ① 작업표준 확인 ──────────────────────────────────────────
 st.markdown("<div class='section-title'>📋 작업 표준 및 품질 통합 확인</div>",
@@ -443,7 +335,7 @@ for col, item in zip(ck_cols, items):
         unsafe_allow_html=True
     )
 
-# ── ② 현장 비상 호출 (자동저장 제거) ─────────────────────────
+# ── ② 현장 비상 호출 ─────────────────────────────────────────
 st.markdown("<div class='section-title'>🚨 현장 비상 호출</div>",
             unsafe_allow_html=True)
 
@@ -452,6 +344,9 @@ for i, label in enumerate(["자재결품","품질문제","장비문제","기타�
     if ic[i].button(label, key=f"btn_{label}", use_container_width=True):
         st.session_state.issue_state = None if label == "상황종료" else label
         st.session_state.submitted   = False
+        ok, err = autosave_state(conn)
+        st.session_state.autosave_msg = "✓ 비상 상태 저장 완료" if ok else f"⚠ 저장 실패: {err}"
+        st.session_state.autosave_ok  = ok
         st.rerun()
 
 # ── ③ 생산 관리 기록 ─────────────────────────────────────────
@@ -490,7 +385,7 @@ for idx, row in enumerate(st.session_state.rows):
     c[8].number_input("비가", min_value=0,    key=f"dm_{rid}", label_visibility="collapsed")
     c[9].selectbox("지원",   SUPPORT_WORKERS, key=f"s_{rid}",  label_visibility="collapsed")
 
-    # ➕ 무한분할 방지 (자동저장 제거)
+    # [Fix4] ➕ 무한분할 방지
     if c[10].button("➕", key=f"add_{rid}"):
         if p_sel == "선택" or act_qty <= 0 or uph <= 0:
             st.warning(f"⚠ [{row['time']}] 기종 선택 및 실적 입력 후 분할하세요")
@@ -506,9 +401,8 @@ for idx, row in enumerate(st.session_state.rows):
                     "start_h":  row['start_h'],
                     "is_split": True
                 })
-                # [Fix G] 기존 원본 행의 남은 시간을 실제로 차감 처리
-                st.session_state.rows[idx]['m'] = used_m + down_m
                 st.session_state.next_id += 1
+                autosave_state(conn)
                 st.rerun()
             else:
                 st.warning("⚠ 남은 시간이 없거나 분할 불가합니다")
@@ -516,6 +410,7 @@ for idx, row in enumerate(st.session_state.rows):
     if row.get('is_split'):
         if c[11].button("🗑️", key=f"del_{rid}"):
             st.session_state.rows.pop(idx)
+            autosave_state(conn)
             st.rerun()
 
 # ── ④ 종합 실적 분석 ─────────────────────────────────────────
@@ -577,6 +472,7 @@ with sc1:
         bc[2].text_input("LOT번호", key=f"l_{pt}", label_visibility="collapsed")
 
 with sc2:
+    # [Fix3] 토크 기준 통일: 15 kgf·cm 미만 NG
     st.write(f"**토크 측정 ({int(TORQUE_LIMIT)} kgf·cm 미만 NG)**")
     for k in range(1, 6):
         tc = st.columns([0.8, 2, 1.8])
@@ -598,57 +494,33 @@ with sc2:
 
 st.divider()
 
-# ── ⑥ 수동 저장 버튼 ────────────────────────────────────────
-col_sv, col_info = st.columns([1, 3])
+# ── ⑥ 수동 자동저장 버튼 ────────────────────────────────────
+col_sv, _ = st.columns([1, 3])
 if col_sv.button("💾 현재 상태 저장", use_container_width=True):
-    with st.spinner("저장 중..."):
-        ok, err = save_to_cloud(conn)
-    st.session_state.save_msg = (
-        f"✓ 저장 완료: {datetime.now().strftime('%H:%M:%S')}" if ok
+    ok, err = autosave_state(conn)
+    st.session_state.autosave_msg = (
+        f"✓ 수동저장 완료: {datetime.now().strftime('%H:%M:%S')}" if ok
         else f"⚠ 저장 실패 — {err}"
     )
-    st.session_state.save_ok = ok
+    st.session_state.autosave_ok = ok
     st.rerun()
-col_info.caption("작업 중간중간 수동 저장을 권장합니다. 저장 데이터는 '임시저장' 시트에 보관됩니다.")
 
-# ── ⑦ [C] 전송 실패 복구 큐 재시도 ───────────────────────────
-if st.session_state.pending_queue:
-    st.markdown("<div class='section-title'>🔄 미전송 데이터 재시도</div>",
-                unsafe_allow_html=True)
-    for i, item in enumerate(st.session_state.pending_queue):
-        st.caption(
-            f"[{i+1}] {item.get('ts','')} · {item.get('sheet','')} · "
-            f"{len(item.get('data', []))}행 · 오류: {item.get('error','')[:120]}"
-        )
-    if st.button("🔄 전체 재시도", type="secondary", use_container_width=True):
-        with st.spinner("재전송 중..."):
-            remaining = []
-            for item in st.session_state.pending_queue:
-                ok, err = append_rows(conn, item["sheet"], item["data"])
-                if not ok:
-                    item["error"] = err
-                    remaining.append(item)
-        st.session_state.pending_queue = remaining
-        if not remaining:
-            st.success("✅ 모든 미전송 데이터 재전송 완료")
-        else:
-            st.warning(f"⚠ {len(remaining)}건 여전히 실패 — 네트워크/권한 확인")
-        st.rerun()
-
-# ── ⑧ 최종 전송 ──────────────────────────────────────────────
+# ── ⑦ 최종 전송 ──────────────────────────────────────────────
+# [Fix5] 중복 전송 방지
 if st.session_state.submitted:
     st.success("✅ 이미 전송 완료된 작업일보입니다.")
     if st.button("🔄 새 작업 시작 (초기화)", type="secondary", use_container_width=True):
-        for k in list(st.session_state.keys()):
+        keys_to_del = [k for k in st.session_state.keys()]
+        for k in keys_to_del:
             del st.session_state[k]
         st.rerun()
 else:
-    if st.button("🚀 v8.2.1 최종 데이터 전송", type="primary", use_container_width=True):
+    if st.button("🚀 v8.1 최종 데이터 전송", type="primary", use_container_width=True):
 
         ts     = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         curr_h = datetime.now().hour
 
-        # 생산 데이터 수집
+        # ── 생산 데이터 수집 ──
         final_data = []
         for r in st.session_state.rows:
             p = st.session_state.get(f"p_{r['id']}", "선택")
@@ -688,7 +560,7 @@ else:
             st.warning("⚠ 기종이 선택된 행이 없습니다. 최소 1개 이상 기종을 선택하세요.")
             st.stop()
 
-        # BOM + 토크 수집
+        # ── BOM + 토크 데이터 수집 ──
         bom_row = {
             "Timestamp":   ts,
             "Work_Date":   work_date.strftime("%Y-%m-%d"),
@@ -706,37 +578,34 @@ else:
             except Exception:
                 bom_row[f"Torque_{k}_판정"] = "미입력"
 
-        # 전송
+        # ── [Fix1] 안전한 전송 ──
         with st.spinner("구글 시트에 전송 중..."):
-            ok1, err1 = append_rows(conn, MAIN_SHEET, final_data)
-            ok2, err2 = append_rows(conn, BOM_SHEET,  [bom_row])
+            ok1, err1 = safe_update(conn, MAIN_SHEET, final_data)
+            ok2, err2 = safe_update(conn, BOM_SHEET,  [bom_row])
 
         if ok1 and ok2:
             st.session_state.submitted   = True
             st.session_state.issue_state = None
-            clear_sheet(conn, AUTOSAVE_SHEET)
-            st.success(f"✅ v8.2.1 전송 완료! 생산 {len(final_data)}행 저장됨")
+            # 임시저장 시트 비우기
+            try:
+                conn.update(spreadsheet=SPREADSHEET_URL, worksheet=AUTOSAVE_SHEET, data=pd.DataFrame())
+            except Exception:
+                pass
+            st.success(f"✅ v8.1 전송 완료! 생산 {len(final_data)}행 저장됨")
             st.balloons()
             st.rerun()
+
+        elif ok1 and not ok2:
+            # 생산 데이터는 성공, BOM만 실패 → 재시도 안내
+            st.warning(
+                f"⚠ 생산 데이터 저장 성공, BOM/토크 저장 실패\n"
+                f"오류: {err2}\n"
+                f"'현재 상태 저장' 후 BOM 탭만 재전송하세요."
+            )
         else:
-            # [C] 실패한 페이로드를 pending_queue에 push
-            if not ok1:
-                st.session_state.pending_queue.append({
-                    "ts":    ts,
-                    "sheet": MAIN_SHEET,
-                    "data":  final_data,
-                    "error": err1,
-                })
-            if not ok2:
-                st.session_state.pending_queue.append({
-                    "ts":    ts,
-                    "sheet": BOM_SHEET,
-                    "data":  [bom_row],
-                    "error": err2,
-                })
+            # 생산 데이터 전송 실패 → 상세 오류 표시
             st.error(
-                f"❌ 전송 실패 — 미전송 큐에 추가됨\n\n"
-                f"생산: {'OK' if ok1 else err1}\n\n"
-                f"BOM: {'OK' if ok2 else err2}\n\n"
-                f"아래 '전체 재시도' 버튼으로 재전송하거나 '💾 현재 상태 저장'으로 데이터를 보존하세요."
+                f"❌ 전송 실패\n"
+                f"생산 데이터: {err1}\n"
+                f"BOM 데이터: {err2}"
             )
