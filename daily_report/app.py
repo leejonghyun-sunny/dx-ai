@@ -6,10 +6,10 @@ import time
 from streamlit_gsheets import GSheetsConnection
 
 # ══════════════════════════════════════════════════════════════
-# HSG 스마트작업일보 v8.2.1
-# 변경사항 (v8.2 → v8.2.1)
+# HSG 스마트작업일보 v8.1.2
+# 변경사항 (v8.1.1 → v8.1.2)
 #   [G] 시간 분할(➕) 시 원본 행의 투입 시간 차감 로직 추가 (중복 시간 산정 방지)
-# 변경사항 (v8.1 → v8.2)
+# 변경사항 (v8.1 → v8.1.1)
 #   [A] 자동저장 제거 → 수동저장 전용 (사용자 입력 방식)
 #   [B] 시트 스키마 자동 검증 (빈 시트 오류 원천 차단)
 #   [C] 전송 실패 복구 큐 + 재시도 UI
@@ -19,7 +19,7 @@ from streamlit_gsheets import GSheetsConnection
 # ══════════════════════════════════════════════════════════════
 
 st.set_page_config(
-    page_title="HSG 스마트작업일보 v8.2.1",
+    page_title="HSG 스마트작업일보 v8.1.2",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -406,7 +406,7 @@ if st.session_state.issue_state:
         unsafe_allow_html=True
     )
 
-st.title("스마트작업일보 조립1라인 (v8.2.1)")
+st.title("스마트작업일보 조립1라인 (v8.1.2)")
 
 # 저장 상태 / 큐 배지
 badge_cols = st.columns([3, 2])
@@ -643,7 +643,7 @@ if st.session_state.submitted:
             del st.session_state[k]
         st.rerun()
 else:
-    if st.button("🚀 v8.2.1 최종 데이터 전송", type="primary", use_container_width=True):
+    if st.button("🚀 v8.1.2 최종 데이터 전송", type="primary", use_container_width=True):
 
         ts     = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         curr_h = datetime.now().hour
@@ -715,7 +715,7 @@ else:
             st.session_state.submitted   = True
             st.session_state.issue_state = None
             clear_sheet(conn, AUTOSAVE_SHEET)
-            st.success(f"✅ v8.2.1 전송 완료! 생산 {len(final_data)}행 저장됨")
+            st.success(f"✅ v8.1.2 전송 완료! 생산 {len(final_data)}행 저장됨")
             st.balloons()
             st.rerun()
         else:
