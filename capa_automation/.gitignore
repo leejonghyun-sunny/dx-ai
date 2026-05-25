@@ -1,0 +1,7 @@
+# Google API Key 및 가상환경 깃 업로드 원천 차단 설정 (.gitignore)
+google_key.json
+.venv/
+__pycache__/
+*.log
+capa_debug.log
+inspect_output.txt
