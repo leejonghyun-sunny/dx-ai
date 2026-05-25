@@ -1,0 +1,2 @@
+google_key.json
+secrets_for_cloud.txt
