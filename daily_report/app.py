@@ -85,6 +85,7 @@ SUPPORT_WORKERS= ["없음","강유진","유진화","하순영","강은미","권�
 BOM_PARTS      = ["감속기","로타","케이스","리어커버","센서"]
 TORQUE_LIMIT   = 15.0
 FIXED_WORKER   = "안희선, 박송희"
+APP_PASSWORD   = "hsg1234"  # 사내 공용 패스워드 설정
 
 SLOTS = [
     ("08:30","09:30",60), ("09:30","10:30",60),
@@ -396,6 +397,27 @@ if st.session_state.boot_stage == "RESTORE_PROMPT":
 # ══════════════════════════════════════════════════════════════
 # UI 렌더링
 # ══════════════════════════════════════════════════════════════
+
+# 🔑 앱 내부 공용 패스워드 보안 검증 게이트
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    st.markdown("<h2 style='text-align: center; color: #58a6ff; margin-top: 50px;'>🔑 조립1라인 스마트작업일보 인증</h2>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #8b949e; margin-bottom: 20px;'>본 시스템은 사내 관계자만 접속 가능합니다. 공용 패스워드를 입력하세요.</p>", unsafe_allow_html=True)
+    
+    col_pw1, col_pw2, col_pw3 = st.columns([1.2, 1.6, 1.2])
+    with col_pw2:
+        pw_input = st.text_input("패스워드 입력", type="password", label_visibility="collapsed", placeholder="공용 비밀번호를 입력해 주세요")
+        if st.button("🔓 인증 및 앱 실행", use_container_width=True, type="primary"):
+            if pw_input == APP_PASSWORD:
+                st.session_state.authenticated = True
+                st.success("✅ 인증 성공! 작업일보를 불러옵니다.")
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.error("❌ 패스워드가 올바르지 않습니다.")
+    st.stop()
 
 # 비상 알람 바
 if st.session_state.issue_state:
